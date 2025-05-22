@@ -1,0 +1,818 @@
+<?php
+
+namespace App\Http\Controllers;
+
+use App\Models\Guard;
+use App\Models\Customer;
+use App\Models\Project;
+use App\Models\Shift;
+use App\Models\Attendance;
+use App\Models\User;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Validator;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Hash;
+use Carbon\Carbon;
+
+/**
+ * 警備員管理Controller
+ * 
+ * 警備員の人材管理機能の中核を提供
+ * CRUD操作、スキル管理、勤怠管理、パフォーマンス分析を統合
+ */
+class GuardController extends Controller
+{
+    /**
+     * 警備員一覧を表示
+     * 
+     * @param Request $request
+     * @return \Illuminate\View\View|\Illuminate\Http\JsonResponse
+     */
+    public function index(Request $request)
+    {
+        $user = Auth::user();
+        
+        $query = Guard::with(['user', 'company', 'projects'])
+            ->withCount(['shifts', 'attendances'])
+            ->when($user->role !== 'admin', function($q) use ($user) {
+                return $q->where('company_id', $user->company_id);
+            });
+
+        // 検索条件
+        if ($request->filled('search')) {
+            $search = $request->search;
+            $query->where(function($q) use ($search) {
+                $q->whereHas('user', function($subQ) use ($search) {
+                    $subQ->where('name', 'like', "%{$search}%")
+                         ->orWhere('email', 'like', "%{$search}%");
+                })
+                ->orWhere('employee_id', 'like', "%{$search}%")
+                ->orWhere('phone', 'like', "%{$search}%")
+                ->orWhere('emergency_contact', 'like', "%{$search}%");
+            });
+        }
+
+        // ステータスフィルター
+        if ($request->filled('status')) {
+            $query->where('status', $request->status);
+        }
+
+        // 会社フィルター
+        if ($request->filled('company_id') && $user->role === 'admin') {
+            $query->where('company_id', $request->company_id);
+        }
+
+        // スキルフィルター
+        if ($request->filled('skills')) {
+            $skills = is_array($request->skills) ? $request->skills : [$request->skills];
+            $query->where(function($q) use ($skills) {
+                foreach ($skills as $skill) {
+                    $q->orWhereJsonContains('skills', $skill);
+                }
+            });
+        }
+
+        // 資格フィルター
+        if ($request->filled('qualifications')) {
+            $qualifications = is_array($request->qualifications) ? $request->qualifications : [$request->qualifications];
+            $query->where(function($q) use ($qualifications) {
+                foreach ($qualifications as $qualification) {
+                    $q->orWhereJsonContains('qualifications', $qualification);
+                }
+            });
+        }
+
+        // 経験年数フィルター
+        if ($request->filled('experience_years')) {
+            $query->where('experience_years', '>=', $request->experience_years);
+        }
+
+        // ソート
+        $sortBy = $request->get('sort_by', 'created_at');
+        $sortOrder = $request->get('sort_order', 'desc');
+        
+        if ($sortBy === 'name') {
+            $query->join('users', 'guards.user_id', '=', 'users.id')
+                  ->orderBy('users.name', $sortOrder)
+                  ->select('guards.*');
+        } else {
+            $query->orderBy($sortBy, $sortOrder);
+        }
+
+        if ($request->expectsJson()) {
+            $guards = $query->paginate($request->get('per_page', 15));
+            return $this->paginationResponse($guards, '警備員一覧を取得しました');
+        }
+
+        $guards = $query->paginate(15);
+        $companies = Customer::where('status', 'active')->get();
+        
+        return view('guards.index', compact('guards', 'companies'));
+    }
+
+    /**
+     * 警備員詳細を表示
+     * 
+     * @param int $id
+     * @param Request $request
+     * @return \Illuminate\View\View|\Illuminate\Http\JsonResponse
+     */
+    public function show($id, Request $request)
+    {
+        $user = Auth::user();
+        
+        $guard = Guard::with([
+            'user',
+            'company',
+            'projects.customer',
+            'shifts.project.customer',
+            'attendances.shift.project'
+        ])
+        ->when($user->role !== 'admin', function($q) use ($user) {
+            return $q->where('company_id', $user->company_id);
+        })
+        ->when($user->role === 'guard', function($q) use ($user) {
+            return $q->where('user_id', $user->id);
+        })
+        ->findOrFail($id);
+
+        // 警備員統計情報
+        $statistics = $this->getGuardStatistics($guard);
+        
+        // 最近の勤怠履歴
+        $recentAttendances = $this->getRecentAttendances($guard, 10);
+        
+        // パフォーマンス評価
+        $performance = $this->getPerformanceMetrics($guard);
+
+        if ($request->expectsJson()) {
+            return $this->successResponse([
+                'guard' => $guard,
+                'statistics' => $statistics,
+                'recent_attendances' => $recentAttendances,
+                'performance' => $performance
+            ], '警備員詳細を取得しました');
+        }
+
+        return view('guards.show', compact('guard', 'statistics', 'recentAttendances', 'performance'));
+    }
+
+    /**
+     * 警備員作成フォームを表示
+     * 
+     * @return \Illuminate\View\View
+     */
+    public function create()
+    {
+        $companies = Customer::where('status', 'active')->get();
+        $availableSkills = $this->getAvailableSkills();
+        $availableQualifications = $this->getAvailableQualifications();
+        
+        return view('guards.create', compact('companies', 'availableSkills', 'availableQualifications'));
+    }
+
+    /**
+     * 新規警備員を作成
+     * 
+     * @param Request $request
+     * @return \Illuminate\Http\JsonResponse|\Illuminate\Http\RedirectResponse
+     */
+    public function store(Request $request)
+    {
+        $validator = Validator::make($request->all(), [
+            // ユーザー情報
+            'name' => 'required|string|max:255',
+            'email' => 'required|email|max:255|unique:users',
+            'password' => 'required|string|min:8|confirmed',
+            
+            // 警備員基本情報
+            'employee_id' => 'required|string|max:50|unique:guards',
+            'company_id' => 'required|exists:customers,id',
+            'phone' => 'required|string|max:20',
+            'emergency_contact' => 'nullable|string|max:255',
+            'date_of_birth' => 'required|date|before:today',
+            'hire_date' => 'required|date|before_or_equal:today',
+            'address' => 'required|string|max:500',
+            
+            // 勤務情報
+            'hourly_wage' => 'required|numeric|min:0',
+            'experience_years' => 'required|integer|min:0',
+            'status' => 'required|in:active,inactive,suspended,retired',
+            
+            // スキル・資格
+            'skills' => 'nullable|array',
+            'qualifications' => 'nullable|array',
+            'certifications' => 'nullable|array',
+            
+            // その他
+            'notes' => 'nullable|string',
+            'health_status' => 'nullable|string|max:500',
+            'uniform_size' => 'nullable|string|max:10',
+        ], [
+            'name.required' => '名前は必須です',
+            'email.required' => 'メールアドレスは必須です',
+            'email.email' => '有効なメールアドレスを入力してください',
+            'email.unique' => 'このメールアドレスは既に使用されています',
+            'password.required' => 'パスワードは必須です',
+            'password.min' => 'パスワードは8文字以上で入力してください',
+            'password.confirmed' => 'パスワードが一致しません',
+            'employee_id.required' => '社員IDは必須です',
+            'employee_id.unique' => 'この社員IDは既に使用されています',
+            'company_id.required' => '会社は必須です',
+            'company_id.exists' => '存在しない会社です',
+            'phone.required' => '電話番号は必須です',
+            'date_of_birth.required' => '生年月日は必須です',
+            'date_of_birth.before' => '生年月日は今日より前の日付を入力してください',
+            'hire_date.required' => '入社日は必須です',
+            'hire_date.before_or_equal' => '入社日は今日以前の日付を入力してください',
+            'address.required' => '住所は必須です',
+            'hourly_wage.required' => '時給は必須です',
+            'hourly_wage.numeric' => '時給は数値で入力してください',
+            'hourly_wage.min' => '時給は0以上で入力してください',
+            'experience_years.required' => '経験年数は必須です',
+            'experience_years.integer' => '経験年数は整数で入力してください',
+            'experience_years.min' => '経験年数は0以上で入力してください',
+            'status.required' => 'ステータスは必須です',
+            'status.in' => '無効なステータスです',
+        ]);
+
+        if ($validator->fails()) {
+            if ($request->expectsJson()) {
+                return $this->errorResponse('入力データが無効です', 422, $validator->errors());
+            }
+            return back()->withErrors($validator)->withInput();
+        }
+
+        DB::beginTransaction();
+        try {
+            // ユーザーアカウント作成
+            $user = User::create([
+                'name' => $request->name,
+                'email' => $request->email,
+                'password' => Hash::make($request->password),
+                'role' => 'guard',
+                'employee_id' => $request->employee_id,
+                'company_id' => $request->company_id,
+                'status' => 'active',
+                'email_verified_at' => now(),
+            ]);
+
+            // 警備員プロファイル作成
+            $guard = Guard::create([
+                'user_id' => $user->id,
+                'employee_id' => $request->employee_id,
+                'company_id' => $request->company_id,
+                'phone' => $request->phone,
+                'emergency_contact' => $request->emergency_contact,
+                'date_of_birth' => $request->date_of_birth,
+                'hire_date' => $request->hire_date,
+                'address' => $request->address,
+                'hourly_wage' => $request->hourly_wage,
+                'experience_years' => $request->experience_years,
+                'status' => $request->status,
+                'skills' => $request->skills ?? [],
+                'qualifications' => $request->qualifications ?? [],
+                'certifications' => $request->certifications ?? [],
+                'notes' => $request->notes,
+                'health_status' => $request->health_status,
+                'uniform_size' => $request->uniform_size,
+                'created_by' => Auth::id(),
+            ]);
+
+            DB::commit();
+
+            if ($request->expectsJson()) {
+                return $this->successResponse($guard->load(['user', 'company']), '警備員を作成しました', 201);
+            }
+
+            return redirect()->route('guards.show', $guard)
+                           ->with('success', '警備員を作成しました');
+
+        } catch (\Exception $e) {
+            DB::rollback();
+            
+            if ($request->expectsJson()) {
+                return $this->errorResponse('警備員の作成に失敗しました', 500);
+            }
+            
+            return back()->withInput()->with('error', '警備員の作成に失敗しました');
+        }
+    }
+
+    /**
+     * 警備員編集フォームを表示
+     * 
+     * @param int $id
+     * @return \Illuminate\View\View
+     */
+    public function edit($id)
+    {
+        $user = Auth::user();
+        
+        $guard = Guard::with(['user', 'company'])
+            ->when($user->role !== 'admin', function($q) use ($user) {
+                return $q->where('company_id', $user->company_id);
+            })
+            ->findOrFail($id);
+
+        $companies = Customer::where('status', 'active')->get();
+        $availableSkills = $this->getAvailableSkills();
+        $availableQualifications = $this->getAvailableQualifications();
+        
+        return view('guards.edit', compact('guard', 'companies', 'availableSkills', 'availableQualifications'));
+    }
+
+    /**
+     * 警備員情報を更新
+     * 
+     * @param Request $request
+     * @param int $id
+     * @return \Illuminate\Http\JsonResponse|\Illuminate\Http\RedirectResponse
+     */
+    public function update(Request $request, $id)
+    {
+        $user = Auth::user();
+        
+        $guard = Guard::with('user')
+            ->when($user->role !== 'admin', function($q) use ($user) {
+                return $q->where('company_id', $user->company_id);
+            })
+            ->findOrFail($id);
+
+        $validator = Validator::make($request->all(), [
+            // ユーザー情報
+            'name' => 'required|string|max:255',
+            'email' => 'required|email|max:255|unique:users,email,' . $guard->user_id,
+            'password' => 'nullable|string|min:8|confirmed',
+            
+            // 警備員基本情報
+            'employee_id' => 'required|string|max:50|unique:guards,employee_id,' . $id,
+            'company_id' => 'required|exists:customers,id',
+            'phone' => 'required|string|max:20',
+            'emergency_contact' => 'nullable|string|max:255',
+            'date_of_birth' => 'required|date|before:today',
+            'hire_date' => 'required|date|before_or_equal:today',
+            'address' => 'required|string|max:500',
+            
+            // 勤務情報
+            'hourly_wage' => 'required|numeric|min:0',
+            'experience_years' => 'required|integer|min:0',
+            'status' => 'required|in:active,inactive,suspended,retired',
+            
+            // スキル・資格
+            'skills' => 'nullable|array',
+            'qualifications' => 'nullable|array',
+            'certifications' => 'nullable|array',
+            
+            // その他
+            'notes' => 'nullable|string',
+            'health_status' => 'nullable|string|max:500',
+            'uniform_size' => 'nullable|string|max:10',
+        ], [
+            'name.required' => '名前は必須です',
+            'email.required' => 'メールアドレスは必須です',
+            'email.email' => '有効なメールアドレスを入力してください',
+            'email.unique' => 'このメールアドレスは既に使用されています',
+            'password.min' => 'パスワードは8文字以上で入力してください',
+            'password.confirmed' => 'パスワードが一致しません',
+            'employee_id.required' => '社員IDは必須です',
+            'employee_id.unique' => 'この社員IDは既に使用されています',
+            'company_id.required' => '会社は必須です',
+            'company_id.exists' => '存在しない会社です',
+            'phone.required' => '電話番号は必須です',
+            'date_of_birth.required' => '生年月日は必須です',
+            'date_of_birth.before' => '生年月日は今日より前の日付を入力してください',
+            'hire_date.required' => '入社日は必須です',
+            'hire_date.before_or_equal' => '入社日は今日以前の日付を入力してください',
+            'address.required' => '住所は必須です',
+            'hourly_wage.required' => '時給は必須です',
+            'hourly_wage.numeric' => '時給は数値で入力してください',
+            'hourly_wage.min' => '時給は0以上で入力してください',
+            'experience_years.required' => '経験年数は必須です',
+            'experience_years.integer' => '経験年数は整数で入力してください',
+            'experience_years.min' => '経験年数は0以上で入力してください',
+            'status.required' => 'ステータスは必須です',
+            'status.in' => '無効なステータスです',
+        ]);
+
+        if ($validator->fails()) {
+            if ($request->expectsJson()) {
+                return $this->errorResponse('入力データが無効です', 422, $validator->errors());
+            }
+            return back()->withErrors($validator)->withInput();
+        }
+
+        DB::beginTransaction();
+        try {
+            // ユーザーアカウント更新
+            $userData = [
+                'name' => $request->name,
+                'email' => $request->email,
+                'employee_id' => $request->employee_id,
+                'company_id' => $request->company_id,
+            ];
+
+            if ($request->filled('password')) {
+                $userData['password'] = Hash::make($request->password);
+                $userData['password_changed_at'] = now();
+            }
+
+            $guard->user->update($userData);
+
+            // 警備員プロファイル更新
+            $guard->update([
+                'employee_id' => $request->employee_id,
+                'company_id' => $request->company_id,
+                'phone' => $request->phone,
+                'emergency_contact' => $request->emergency_contact,
+                'date_of_birth' => $request->date_of_birth,
+                'hire_date' => $request->hire_date,
+                'address' => $request->address,
+                'hourly_wage' => $request->hourly_wage,
+                'experience_years' => $request->experience_years,
+                'status' => $request->status,
+                'skills' => $request->skills ?? [],
+                'qualifications' => $request->qualifications ?? [],
+                'certifications' => $request->certifications ?? [],
+                'notes' => $request->notes,
+                'health_status' => $request->health_status,
+                'uniform_size' => $request->uniform_size,
+                'updated_by' => Auth::id(),
+            ]);
+
+            DB::commit();
+
+            if ($request->expectsJson()) {
+                return $this->successResponse($guard->load(['user', 'company']), '警備員情報を更新しました');
+            }
+
+            return redirect()->route('guards.show', $guard)
+                           ->with('success', '警備員情報を更新しました');
+
+        } catch (\Exception $e) {
+            DB::rollback();
+            
+            if ($request->expectsJson()) {
+                return $this->errorResponse('警備員情報の更新に失敗しました', 500);
+            }
+            
+            return back()->withInput()->with('error', '警備員情報の更新に失敗しました');
+        }
+    }
+
+    /**
+     * 警備員を削除
+     * 
+     * @param int $id
+     * @param Request $request
+     * @return \Illuminate\Http\JsonResponse|\Illuminate\Http\RedirectResponse
+     */
+    public function destroy($id, Request $request)
+    {
+        $user = Auth::user();
+        
+        // 管理者のみ削除可能
+        if ($user->role !== 'admin') {
+            if ($request->expectsJson()) {
+                return $this->errorResponse('権限がありません', 403);
+            }
+            return back()->with('error', '権限がありません');
+        }
+
+        $guard = Guard::with('user')->findOrFail($id);
+
+        // 関連データの確認
+        if ($guard->shifts()->exists()) {
+            if ($request->expectsJson()) {
+                return $this->errorResponse('関連するシフトが存在するため削除できません', 400);
+            }
+            return back()->with('error', '関連するシフトが存在するため削除できません');
+        }
+
+        DB::beginTransaction();
+        try {
+            // プロジェクトアサインを削除
+            $guard->projects()->detach();
+            
+            // 警備員プロファイルを削除
+            $guard->delete();
+            
+            // ユーザーアカウントを削除
+            $guard->user->delete();
+            
+            DB::commit();
+
+            if ($request->expectsJson()) {
+                return $this->successResponse(null, '警備員を削除しました');
+            }
+
+            return redirect()->route('guards.index')
+                           ->with('success', '警備員を削除しました');
+
+        } catch (\Exception $e) {
+            DB::rollback();
+            
+            if ($request->expectsJson()) {
+                return $this->errorResponse('警備員の削除に失敗しました', 500);
+            }
+            
+            return back()->with('error', '警備員の削除に失敗しました');
+        }
+    }
+
+    /**
+     * 警備員統計情報を取得
+     * 
+     * @param Guard $guard
+     * @return array
+     */
+    private function getGuardStatistics(Guard $guard): array
+    {
+        $totalShifts = $guard->shifts()->count();
+        $completedShifts = $guard->shifts()->where('status', 'completed')->count();
+        $completionRate = $totalShifts > 0 ? ($completedShifts / $totalShifts) * 100 : 0;
+
+        $totalHours = $guard->attendances()->sum('worked_hours');
+        $averageHoursPerShift = $totalShifts > 0 ? $totalHours / $totalShifts : 0;
+
+        $currentMonth = Carbon::now()->startOfMonth();
+        $monthlyHours = $guard->attendances()
+            ->where('date', '>=', $currentMonth)
+            ->sum('worked_hours');
+
+        $monthlyEarnings = $monthlyHours * $guard->hourly_wage;
+
+        return [
+            'total_shifts' => $totalShifts,
+            'completed_shifts' => $completedShifts,
+            'completion_rate' => round($completionRate, 1),
+            'total_hours' => $totalHours,
+            'average_hours_per_shift' => round($averageHoursPerShift, 1),
+            'monthly_hours' => $monthlyHours,
+            'monthly_earnings' => $monthlyEarnings,
+            'total_projects' => $guard->projects()->count(),
+            'active_projects' => $guard->projects()->where('status', 'active')->count(),
+            'experience_months' => Carbon::parse($guard->hire_date)->diffInMonths(Carbon::now()),
+            'attendance_rate' => $this->calculateAttendanceRate($guard),
+        ];
+    }
+
+    /**
+     * 最近の勤怠履歴を取得
+     * 
+     * @param Guard $guard
+     * @param int $limit
+     * @return \Illuminate\Database\Eloquent\Collection
+     */
+    private function getRecentAttendances(Guard $guard, int $limit = 10)
+    {
+        return $guard->attendances()
+            ->with(['shift.project.customer'])
+            ->orderBy('date', 'desc')
+            ->limit($limit)
+            ->get();
+    }
+
+    /**
+     * パフォーマンス評価を取得
+     * 
+     * @param Guard $guard
+     * @return array
+     */
+    private function getPerformanceMetrics(Guard $guard): array
+    {
+        $last3Months = Carbon::now()->subMonths(3);
+        
+        return [
+            'punctuality_score' => $this->calculatePunctualityScore($guard, $last3Months),
+            'reliability_score' => $this->calculateReliabilityScore($guard, $last3Months),
+            'quality_score' => $this->calculateQualityScore($guard, $last3Months),
+            'overall_rating' => $this->calculateOverallRating($guard, $last3Months),
+        ];
+    }
+
+    /**
+     * 出席率を計算
+     * 
+     * @param Guard $guard
+     * @return float
+     */
+    private function calculateAttendanceRate(Guard $guard): float
+    {
+        $scheduledShifts = $guard->shifts()->count();
+        $attendedShifts = $guard->attendances()->count();
+
+        return $scheduledShifts > 0 ? ($attendedShifts / $scheduledShifts) * 100 : 0;
+    }
+
+    /**
+     * 時間厳守スコアを計算
+     * 
+     * @param Guard $guard
+     * @param Carbon $since
+     * @return float
+     */
+    private function calculatePunctualityScore(Guard $guard, Carbon $since): float
+    {
+        $attendances = $guard->attendances()->where('date', '>=', $since)->get();
+        
+        if ($attendances->isEmpty()) {
+            return 0;
+        }
+
+        $onTimeCount = $attendances->where('on_time', true)->count();
+        return ($onTimeCount / $attendances->count()) * 100;
+    }
+
+    /**
+     * 信頼性スコアを計算
+     * 
+     * @param Guard $guard
+     * @param Carbon $since
+     * @return float
+     */
+    private function calculateReliabilityScore(Guard $guard, Carbon $since): float
+    {
+        $scheduledShifts = $guard->shifts()->where('shift_date', '>=', $since)->count();
+        $attendedShifts = $guard->attendances()->where('date', '>=', $since)->count();
+
+        return $scheduledShifts > 0 ? ($attendedShifts / $scheduledShifts) * 100 : 0;
+    }
+
+    /**
+     * 品質スコアを計算
+     * 
+     * @param Guard $guard
+     * @param Carbon $since
+     * @return float
+     */
+    private function calculateQualityScore(Guard $guard, Carbon $since): float
+    {
+        // 日報の品質、報告書の完成度等から算出
+        // 現在は仮実装として固定値を返す
+        return 85.0;
+    }
+
+    /**
+     * 総合評価を計算
+     * 
+     * @param Guard $guard
+     * @param Carbon $since
+     * @return float
+     */
+    private function calculateOverallRating(Guard $guard, Carbon $since): float
+    {
+        $punctuality = $this->calculatePunctualityScore($guard, $since);
+        $reliability = $this->calculateReliabilityScore($guard, $since);
+        $quality = $this->calculateQualityScore($guard, $since);
+
+        return ($punctuality * 0.3 + $reliability * 0.4 + $quality * 0.3);
+    }
+
+    /**
+     * 利用可能なスキル一覧を取得
+     * 
+     * @return array
+     */
+    private function getAvailableSkills(): array
+    {
+        return [
+            '施設警備', '交通誘導', '駐車場管理', '巡回警備', '機械警備',
+            '身辺警備', 'イベント警備', '運搬警備', '空港保安', 'ビル管理',
+            '防犯カメラ操作', '無線操作', '応急手当', '消防設備操作', 'PC操作'
+        ];
+    }
+
+    /**
+     * 利用可能な資格一覧を取得
+     * 
+     * @return array
+     */
+    private function getAvailableQualifications(): array
+    {
+        return [
+            '警備員検定1級', '警備員検定2級', '警備業務検定1級', '警備業務検定2級',
+            '防火管理者', '防災管理者', '普通救命講習', '上級救命講習',
+            '警備員指導教育責任者', '機械警備業務管理者', '交通誘導警備業務検定',
+            '雑踏警備業務検定', '施設警備業務検定', '貴重品運搬警備業務検定'
+        ];
+    }
+
+    /**
+     * 警備員のステータスを更新
+     * 
+     * @param int $id
+     * @param Request $request
+     * @return \Illuminate\Http\JsonResponse|\Illuminate\Http\RedirectResponse
+     */
+    public function updateStatus($id, Request $request)
+    {
+        $validator = Validator::make($request->all(), [
+            'status' => 'required|in:active,inactive,suspended,retired',
+            'reason' => 'nullable|string|max:500'
+        ]);
+
+        if ($validator->fails()) {
+            if ($request->expectsJson()) {
+                return $this->errorResponse('入力データが無効です', 422, $validator->errors());
+            }
+            return back()->withErrors($validator);
+        }
+
+        $guard = Guard::findOrFail($id);
+        
+        $guard->update([
+            'status' => $request->status,
+            'status_updated_at' => now(),
+            'status_update_reason' => $request->reason,
+            'updated_by' => Auth::id(),
+        ]);
+
+        // ユーザーアカウントのステータスも更新
+        $userStatus = $request->status === 'active' ? 'active' : 'inactive';
+        $guard->user->update(['status' => $userStatus]);
+
+        if ($request->expectsJson()) {
+            return $this->successResponse($guard, '警備員ステータスを更新しました');
+        }
+
+        return back()->with('success', '警備員ステータスを更新しました');
+    }
+
+    /**
+     * 警備員のスキル・資格を更新
+     * 
+     * @param int $id
+     * @param Request $request
+     * @return \Illuminate\Http\JsonResponse|\Illuminate\Http\RedirectResponse
+     */
+    public function updateSkills($id, Request $request)
+    {
+        $validator = Validator::make($request->all(), [
+            'skills' => 'nullable|array',
+            'qualifications' => 'nullable|array',
+            'certifications' => 'nullable|array',
+        ]);
+
+        if ($validator->fails()) {
+            if ($request->expectsJson()) {
+                return $this->errorResponse('入力データが無効です', 422, $validator->errors());
+            }
+            return back()->withErrors($validator);
+        }
+
+        $guard = Guard::findOrFail($id);
+        
+        $guard->update([
+            'skills' => $request->skills ?? [],
+            'qualifications' => $request->qualifications ?? [],
+            'certifications' => $request->certifications ?? [],
+            'updated_by' => Auth::id(),
+        ]);
+
+        if ($request->expectsJson()) {
+            return $this->successResponse($guard, 'スキル・資格情報を更新しました');
+        }
+
+        return back()->with('success', 'スキル・資格情報を更新しました');
+    }
+
+    /**
+     * 警備員の給与情報を更新
+     * 
+     * @param int $id
+     * @param Request $request
+     * @return \Illuminate\Http\JsonResponse|\Illuminate\Http\RedirectResponse
+     */
+    public function updateWage($id, Request $request)
+    {
+        $validator = Validator::make($request->all(), [
+            'hourly_wage' => 'required|numeric|min:0',
+            'effective_date' => 'required|date',
+            'reason' => 'nullable|string|max:500'
+        ]);
+
+        if ($validator->fails()) {
+            if ($request->expectsJson()) {
+                return $this->errorResponse('入力データが無効です', 422, $validator->errors());
+            }
+            return back()->withErrors($validator);
+        }
+
+        $guard = Guard::findOrFail($id);
+        
+        $guard->update([
+            'hourly_wage' => $request->hourly_wage,
+            'wage_updated_at' => $request->effective_date,
+            'wage_update_reason' => $request->reason,
+            'updated_by' => Auth::id(),
+        ]);
+
+        if ($request->expectsJson()) {
+            return $this->successResponse($guard, '給与情報を更新しました');
+        }
+
+        return back()->with('success', '給与情報を更新しました');
+    }
+}
