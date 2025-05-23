@@ -12,6 +12,7 @@
 - **データベース基盤**: ✅ 完了（11テーブル）
 - **Eloquentモデル**: ✅ 完了（11個）
 - **Controller機能**: ✅ 完了（10個）
+- **ルーティング設定**: ✅ 完了（Web・API両対応）
 - **ビジネスロジック**: ✅ 完了
 - **バックエンドAPI**: ✅ 完了
 - **フロントエンド**: 🔄 実装予定
@@ -326,21 +327,200 @@
 - 危険手当・特殊勤務手当
 - 交通費・諸経費管理
 
-## 4. システム構成
+## 4. ルーティング設定
 
-### 4.1 技術仕様
+### 4.1 実装完了状況
+**実装日**: 2025年5月23日  
+**実装済みルート数**: 200+  
+**設計方針**: RESTful API + 権限ベースアクセス制御
+
+### 4.2 Webルーティング（web.php）
+
+#### 4.2.1 パブリックルート（認証不要）
+```php
+// ウェルカムページ
+Route::get('/', 'welcome')->name('home');
+
+// 認証関連
+Route::prefix('auth')->group(function () {
+    Route::get('/login', 'showLoginForm')->name('auth.login.form');
+    Route::post('/login', 'login')->name('auth.login');
+    Route::get('/register', 'showRegistrationForm')->name('auth.register.form');
+    Route::post('/register', 'register')->name('auth.register');
+    Route::get('/password/reset', 'showPasswordResetForm')->name('auth.password.reset.form');
+    Route::post('/password/reset', 'resetPassword')->name('auth.password.reset');
+});
+```
+
+#### 4.2.2 認証必須ルート
+```php
+Route::middleware(['auth'])->group(function () {
+    // ダッシュボード
+    Route::prefix('dashboard')->group(function () {
+        Route::get('/', 'index')->name('dashboard.index');
+        Route::get('/stats', 'getStats')->name('dashboard.stats');
+        Route::get('/kpi', 'getKpi')->name('dashboard.kpi');
+        Route::get('/alerts', 'getAlerts')->name('dashboard.alerts');
+    });
+    
+    // 各機能のCRUDルート（11機能完備）
+    // - customers（顧客管理）
+    // - projects（案件管理）
+    // - guards（警備員管理）
+    // - shifts（シフト管理）
+    // - attendances（勤怠管理）
+    // - quotations（見積管理）
+    // - contracts（契約管理）
+    // - invoices（請求管理）
+    // - daily-reports（日報管理）
+});
+```
+
+#### 4.2.3 Ajax通信用ルート
+```php
+Route::prefix('ajax')->middleware(['auth', 'web'])->group(function () {
+    // 各機能の検索・統計API（Webページ用）
+    Route::get('/customers/search', 'search')->name('ajax.customers.search');
+    Route::get('/customers/stats', 'getStats')->name('ajax.customers.stats');
+    // 他10機能同様のAjaxルート実装
+});
+```
+
+### 4.3 APIルーティング（api.php）
+
+#### 4.3.1 認証API
+```php
+Route::prefix('auth')->group(function () {
+    // パブリック認証API
+    Route::post('/login', 'apiLogin')->name('api.auth.login');
+    Route::post('/register', 'apiRegister')->name('api.auth.register');
+    Route::post('/password/reset', 'apiResetPassword')->name('api.auth.password.reset');
+    
+    // 認証必須API
+    Route::middleware('auth:sanctum')->group(function () {
+        Route::post('/logout', 'apiLogout')->name('api.auth.logout');
+        Route::get('/user', 'getAuthenticatedUser')->name('api.auth.user');
+        Route::post('/password/change', 'apiChangePassword')->name('api.auth.password.change');
+    });
+});
+```
+
+#### 4.3.2 RESTful API（全機能対応）
+```php
+Route::middleware('auth:sanctum')->group(function () {
+    // 顧客管理API
+    Route::prefix('customers')->group(function () {
+        Route::get('/', 'apiIndex')->name('api.customers.index');
+        Route::post('/', 'apiStore')->name('api.customers.store');
+        Route::get('/{customer}', 'apiShow')->name('api.customers.show');
+        Route::put('/{customer}', 'apiUpdate')->name('api.customers.update');
+        Route::delete('/{customer}', 'apiDestroy')->name('api.customers.destroy');
+        // 追加機能：検索、統計、フィルタリング
+    });
+    
+    // 他10機能（projects, guards, shifts等）同様のRESTful API実装
+});
+```
+
+#### 4.3.3 システム管理API
+```php
+Route::prefix('system')->group(function () {
+    Route::get('/info', 'システム情報')->name('api.system.info');
+    Route::get('/health', 'ヘルスチェック')->name('api.system.health');
+    Route::get('/version', 'バージョン情報')->name('api.system.version');
+});
+```
+
+### 4.4 ルーティング設計特徴
+
+#### 4.4.1 権限ベースアクセス制御
+- **admin**: 全機能アクセス可能
+- **manager**: 管理機能・統計情報アクセス
+- **guard**: 自身の勤怠・シフト・日報のみ
+- **operator**: 基本的なCRUD操作のみ
+
+#### 4.4.2 RESTful設計原則
+- **GET**: データ取得（一覧、詳細、検索）
+- **POST**: データ作成
+- **PUT**: データ更新
+- **DELETE**: データ削除
+- **統一レスポンス形式**: 成功・エラー共通構造
+
+#### 4.4.3 API認証方式
+- **Webアプリ**: セッション認証
+- **API**: Laravel Sanctum Token認証
+- **CSRF保護**: Web用のフォーム送信保護
+
+#### 4.4.4 エラーハンドリング
+- **404 Not Found**: 存在しないルート
+- **422 Validation Error**: バリデーションエラー
+- **401 Unauthorized**: 認証エラー
+- **403 Forbidden**: 権限エラー
+
+### 4.5 高度な機能ルート
+
+#### 4.5.1 カレンダー・日程管理
+```php
+Route::prefix('shifts')->group(function () {
+    Route::get('/calendar/data', 'apiGetCalendarData');
+    Route::get('/calendar/month/{year}/{month}', 'apiGetMonthlyShifts');
+    Route::get('/calendar/week/{year}/{week}', 'apiGetWeeklyShifts');
+    Route::get('/calendar/day/{date}', 'apiGetDailyShifts');
+});
+```
+
+#### 4.5.2 承認フロー
+```php
+// 各機能共通の承認ルート
+Route::post('/{resource}/approve', 'approve');
+Route::post('/{resource}/reject', 'reject');
+```
+
+#### 4.5.3 レポート・統計
+```php
+Route::prefix('reports')->group(function () {
+    Route::get('/revenue', 'getRevenueReport');
+    Route::get('/attendance', 'getAttendanceReport');
+    Route::get('/performance', 'getPerformanceReport');
+});
+```
+
+#### 4.5.4 ファイル管理
+```php
+Route::prefix('files')->group(function () {
+    Route::post('/upload', 'upload');
+    Route::get('/download/{file}', 'download');
+    Route::delete('/{file}', 'delete');
+});
+```
+
+### 4.6 モバイル・外部連携対応
+
+#### 4.6.1 モバイルアプリ対応
+- 全APIはJSON形式レスポンス
+- トークン認証による安全な通信
+- 最適化されたレスポンスサイズ
+
+#### 4.6.2 外部システム連携
+- **GPS連携**: 勤怠位置情報記録
+- **メール送信**: 通知・督促機能
+- **CSV エクスポート**: データ出力機能
+
+## 5. システム構成
+
+### 5.1 技術仕様
 - **フレームワーク**: Laravel 10.x
 - **プログラミング言語**: PHP 8.1以上
 - **データベース**: MySQL 8.0
 - **Webサーバー**: Apache 2.4
 - **フロントエンド**: HTML5, CSS3, JavaScript, Bootstrap 5
 
-### 4.2 開発環境
+### 5.2 開発環境
 - **ローカル環境**: XAMPP
 - **ステージング環境**: 本番同等環境
 - **本番環境**: レンタルサーバーまたはクラウド
 
-### 4.3 ディレクトリ構成
+### 5.3 ディレクトリ構成
 ```
 keibi-system/
 ├── app/
@@ -361,9 +541,9 @@ keibi-system/
 └── docs/                   # プロジェクト文書
 ```
 
-## 5. データベース設計
+## 6. データベース設計
 
-### 5.1 実装状況
+### 6.1 実装状況
 - **実装完了日**: 2025年5月22日
 - **データベース名**: keibi_system
 - **テーブル数**: 11テーブル
@@ -371,7 +551,7 @@ keibi-system/
 - **テストデータ**: 警備業界特有のリアルデータ投入完了
 - **整合性**: 外部キー制約、インデックス、ユニーク制約完備
 
-### 5.2 主要テーブル構成
+### 6.2 主要テーブル構成
 
 #### customers（顧客マスタ）
 - id (PK, AUTO_INCREMENT)
@@ -496,7 +676,7 @@ keibi-system/
 - approved_at (承認日時)
 - created_at, updated_at
 
-### 5.3 実装済みテーブル詳細
+### 6.3 実装済みテーブル詳細
 
 #### users（ユーザーマスタ）- **実装完了**
 - Laravel標準認証テーブルを拡張
@@ -508,7 +688,7 @@ keibi-system/
 - 配置時間、役割、ステータス管理
 - 柔軟なシフト配置に対応
 
-### 5.4 Eloquentモデル実装状況
+### 6.4 Eloquentモデル実装状況
 全11個のモデルクラス実装完了：
 - **User**: 認証・権限管理
 - **Customer**: 顧客管理・関連プロジェクト
@@ -522,7 +702,7 @@ keibi-system/
 - **DailyReport**: 日報管理・承認ワークフロー
 - **ShiftGuardAssignment**: シフト配置管理
 
-### 5.5 データベース特徴
+### 6.5 データベース特徴
 - **JSON型活用**: qualifications, skills, permissions等
 - **enum型ステータス管理**: 各テーブルで適切な状態管理
 - **外部キー制約**: データ整合性確保
@@ -530,7 +710,7 @@ keibi-system/
 - **日本語コメント**: 保守性向上
 - **SoftDeletes対応**: 論理削除による履歴保持
 
-### 5.6 テストデータ詳細
+### 6.6 テストデータ詳細
 警備業界特有のリアルなダミーデータ投入済み：
 - **顧客**: 10社（大手企業、中小企業、個人事業主等）
 - **ユーザー**: 8名（管理者、営業、現場責任者、警備員）
@@ -539,7 +719,7 @@ keibi-system/
 - **シフト**: 15種（昼夜勤、週末、長期短期等）
 - **その他**: 勤怠、見積、契約、請求、日報等の関連データ
 
-## 6. 開発スケジュール
+## 7. 開発スケジュール
 
 ### フェーズ1: 基盤構築・マスタ管理機能（4週間）✅ 完了
 1. 顧客管理機能
@@ -571,15 +751,15 @@ keibi-system/
 3. セキュリティテスト
 4. 運用マニュアル作成
 
-## 7. 運用・保守
+## 8. 運用・保守
 
-### 7.1 保守項目
+### 8.1 保守項目
 - システム監視
 - バックアップ管理
 - セキュリティパッチ適用
 - 機能追加・改修
 
-### 7.2 サポート体制
+### 8.2 サポート体制
 - 平日 9:00-18:00 電話・メールサポート
 - 緊急時24時間対応
 - 月次定期メンテナンス
@@ -588,7 +768,7 @@ keibi-system/
 
 **作成日**: 2025年5月22日  
 **最終更新**: 2025年5月23日  
-**バージョン**: 2.0  
+**バージョン**: 2.1  
 **作成者**: Claude AI Assistant  
-**重要な更新**: Controller実装完了により機能仕様を大幅更新  
+**重要な更新**: ルーティング設定完了により機能仕様を大幅更新  
 
