@@ -158,6 +158,15 @@ Route::middleware(['auth'])->group(function () {
         // カレンダー表示
         Route::get('/calendar/view', [ShiftController::class, 'calendarView'])->name('calendar');
         Route::get('/calendar/data', [ShiftController::class, 'getCalendarData'])->name('calendar.data');
+        Route::get('/calendar/stats', [ShiftController::class, 'getCalendarStats'])->name('calendar.stats');
+        Route::get('/calendar/export', [ShiftController::class, 'exportCalendarData'])->name('calendar.export');
+        
+        // 定期シフト作成
+        Route::get('/create/recurring', [ShiftController::class, 'createRecurring'])->name('create.recurring');
+        
+        // Ajax更新機能
+        Route::post('/{shift}/update/date', [ShiftController::class, 'updateDate'])->name('update.date');
+        Route::post('/{shift}/update/time', [ShiftController::class, 'updateTime'])->name('update.time');
     });
     
     // =============================================================================

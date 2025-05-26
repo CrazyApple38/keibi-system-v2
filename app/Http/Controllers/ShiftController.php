@@ -837,4 +837,410 @@ class ShiftController extends Controller
 
         return $this->successResponse($calendarData, 'カレンダーデータを取得しました');
     }
+
+    /**
+     * カレンダービューを表示
+     * 
+     * @return \Illuminate\View\View
+     */
+    public function calendarView()
+    {
+        $projects = Project::where('status', 'active')->with('customer')->get();
+        $guards = Guard::where('status', 'active')->with('user')->get();
+        
+        return view('shifts.calendar', compact('projects', 'guards'));
+    }
+
+    /**
+     * FullCalendar用のシフトデータを取得
+     * 
+     * @param Request $request
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function getCalendarData(Request $request)
+    {
+        $user = Auth::user();
+        
+        $startDate = $request->get('start');
+        $endDate = $request->get('end');
+        
+        $query = Shift::with(['project.customer', 'assignments.guard.user'])
+            ->when($startDate, function($q) use ($startDate) {
+                return $q->where('shift_date', '>=', $startDate);
+            })
+            ->when($endDate, function($q) use ($endDate) {
+                return $q->where('shift_date', '<=', $endDate);
+            })
+            ->when($user->role !== 'admin', function($q) use ($user) {
+                return $q->whereHas('project', function($subQ) use ($user) {
+                    $subQ->where('customer_id', $user->company_id);
+                });
+            })
+            ->when($user->role === 'guard', function($q) use ($user) {
+                return $q->whereHas('assignments', function($subQ) use ($user) {
+                    $subQ->where('guard_id', $user->guard_id);
+                });
+            });
+
+        // フィルター適用
+        if ($request->filled('project_id')) {
+            $query->where('project_id', $request->project_id);
+        }
+        
+        if ($request->filled('guard_id')) {
+            $query->whereHas('assignments', function($q) use ($request) {
+                $q->where('guard_id', $request->guard_id);
+            });
+        }
+        
+        if ($request->filled('status')) {
+            $query->where('status', $request->status);
+        }
+
+        $shifts = $query->get();
+
+        // FullCalendar形式にフォーマット
+        $events = $shifts->map(function($shift) use ($request) {
+            $assignedCount = $shift->assignments->count();
+            $hasConflict = $this->checkShiftConflict($shift);
+            
+            $event = [
+                'id' => $shift->id,
+                'title' => $shift->project->name . ' (' . $assignedCount . '/' . $shift->required_guards . ')',
+                'start' => $shift->shift_date . 'T' . $shift->start_time,
+                'end' => $shift->shift_date . 'T' . $shift->end_time,
+                'backgroundColor' => $this->getStatusColor($shift->status),
+                'borderColor' => $this->getStatusColor($shift->status),
+                'extendedProps' => [
+                    'location' => $shift->location,
+                    'description' => $shift->description,
+                    'status' => $shift->status,
+                    'statusText' => $this->getStatusText($shift->status),
+                    'assignedCount' => $assignedCount,
+                    'requiredCount' => $shift->required_guards,
+                    'hasConflict' => $hasConflict,
+                    'projectName' => $shift->project->name,
+                    'customerName' => $shift->project->customer->name,
+                ]
+            ];
+
+            // 競合がある場合は色を変更
+            if ($hasConflict && $request->get('show_conflicts')) {
+                $event['backgroundColor'] = '#ffc107';
+                $event['borderColor'] = '#ffc107';
+            }
+
+            return $event;
+        });
+
+        return response()->json($events);
+    }
+
+    /**
+     * カレンダー統計情報を取得
+     * 
+     * @param Request $request
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function getCalendarStats(Request $request)
+    {
+        $user = Auth::user();
+        
+        $startDate = $request->get('start_date');
+        $endDate = $request->get('end_date');
+        
+        $query = Shift::when($startDate, function($q) use ($startDate) {
+                return $q->where('shift_date', '>=', $startDate);
+            })
+            ->when($endDate, function($q) use ($endDate) {
+                return $q->where('shift_date', '<=', $endDate);
+            })
+            ->when($user->role !== 'admin', function($q) use ($user) {
+                return $q->whereHas('project', function($subQ) use ($user) {
+                    $subQ->where('customer_id', $user->company_id);
+                });
+            });
+
+        // フィルター適用
+        if ($request->filled('project_id')) {
+            $query->where('project_id', $request->project_id);
+        }
+        
+        if ($request->filled('guard_id')) {
+            $query->whereHas('assignments', function($q) use ($request) {
+                $q->where('guard_id', $request->guard_id);
+            });
+        }
+        
+        if ($request->filled('status')) {
+            $query->where('status', $request->status);
+        }
+
+        $shifts = $query->with(['assignments'])->get();
+        
+        $totalShifts = $shifts->count();
+        $assignedGuards = $shifts->sum(function($shift) {
+            return $shift->assignments->count();
+        });
+        
+        $conflicts = $shifts->filter(function($shift) {
+            return $this->checkShiftConflict($shift);
+        })->count();
+        
+        $totalHours = $shifts->sum('duration_hours');
+
+        return response()->json([
+            'total_shifts' => $totalShifts,
+            'assigned_guards' => $assignedGuards,
+            'conflicts' => $conflicts,
+            'total_hours' => round($totalHours, 1),
+        ]);
+    }
+
+    /**
+     * カレンダーデータをエクスポート
+     * 
+     * @param Request $request
+     * @return \Symfony\Component\HttpFoundation\BinaryFileResponse
+     */
+    public function exportCalendarData(Request $request)
+    {
+        $user = Auth::user();
+        
+        $startDate = $request->get('start_date');
+        $endDate = $request->get('end_date');
+        $format = $request->get('format', 'excel');
+        
+        $query = Shift::with(['project.customer', 'assignments.guard.user'])
+            ->when($startDate, function($q) use ($startDate) {
+                return $q->where('shift_date', '>=', $startDate);
+            })
+            ->when($endDate, function($q) use ($endDate) {
+                return $q->where('shift_date', '<=', $endDate);
+            })
+            ->when($user->role !== 'admin', function($q) use ($user) {
+                return $q->whereHas('project', function($subQ) use ($user) {
+                    $subQ->where('customer_id', $user->company_id);
+                });
+            });
+
+        // フィルター適用
+        if ($request->filled('project_id')) {
+            $query->where('project_id', $request->project_id);
+        }
+
+        $shifts = $query->orderBy('shift_date')->orderBy('start_time')->get();
+
+        $data = [];
+        $data[] = ['日付', '開始時間', '終了時間', '場所', 'プロジェクト', '顧客', '必要警備員数', '配置済み警備員数', 'ステータス'];
+        
+        foreach ($shifts as $shift) {
+            $data[] = [
+                $shift->shift_date,
+                $shift->start_time,
+                $shift->end_time,
+                $shift->location,
+                $shift->project->name,
+                $shift->project->customer->name,
+                $shift->required_guards,
+                $shift->assignments->count(),
+                $this->getStatusText($shift->status),
+            ];
+        }
+
+        // CSV形式でダウンロード
+        $filename = 'shift_calendar_' . date('Y-m-d') . '.csv';
+        
+        $handle = fopen('php://output', 'w');
+        ob_start();
+        
+        // BOM付きUTF-8
+        fwrite($handle, "\xEF\xBB\xBF");
+        
+        foreach ($data as $row) {
+            fputcsv($handle, $row);
+        }
+        
+        fclose($handle);
+        $csvData = ob_get_clean();
+
+        return response($csvData)
+            ->header('Content-Type', 'text/csv; charset=UTF-8')
+            ->header('Content-Disposition', 'attachment; filename="' . $filename . '"');
+    }
+
+    /**
+     * 定期シフト作成フォームを表示
+     * 
+     * @return \Illuminate\View\View
+     */
+    public function createRecurring()
+    {
+        $projects = Project::where('status', 'active')->with('customer')->get();
+        $guards = Guard::where('status', 'active')->with('user')->get();
+        
+        return view('shifts.create-recurring', compact('projects', 'guards'));
+    }
+
+    /**
+     * シフト日付を更新
+     * 
+     * @param int $id
+     * @param Request $request
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function updateDate($id, Request $request)
+    {
+        $validator = Validator::make($request->all(), [
+            'new_date' => 'required|date|after_or_equal:today',
+        ]);
+
+        if ($validator->fails()) {
+            return $this->errorResponse('無効な日付です', 422, $validator->errors());
+        }
+
+        $user = Auth::user();
+        
+        $shift = Shift::when($user->role !== 'admin', function($q) use ($user) {
+            return $q->whereHas('project', function($subQ) use ($user) {
+                $subQ->where('customer_id', $user->company_id);
+            });
+        })->findOrFail($id);
+
+        // 勤怠記録がある場合は変更不可
+        if ($shift->attendances()->exists()) {
+            return $this->errorResponse('勤怠記録が存在するため日付を変更できません', 400);
+        }
+
+        $shift->update([
+            'shift_date' => $request->new_date,
+            'updated_by' => Auth::id(),
+        ]);
+
+        return $this->successResponse($shift, 'シフト日付を更新しました');
+    }
+
+    /**
+     * シフト時間を更新
+     * 
+     * @param int $id
+     * @param Request $request
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function updateTime($id, Request $request)
+    {
+        $validator = Validator::make($request->all(), [
+            'start_time' => 'required|date_format:H:i:s',
+            'end_time' => 'nullable|date_format:H:i:s|after:start_time',
+        ]);
+
+        if ($validator->fails()) {
+            return $this->errorResponse('無効な時間です', 422, $validator->errors());
+        }
+
+        $user = Auth::user();
+        
+        $shift = Shift::when($user->role !== 'admin', function($q) use ($user) {
+            return $q->whereHas('project', function($subQ) use ($user) {
+                $subQ->where('customer_id', $user->company_id);
+            });
+        })->findOrFail($id);
+
+        // 勤怠記録がある場合は変更不可
+        if ($shift->attendances()->exists()) {
+            return $this->errorResponse('勤怠記録が存在するため時間を変更できません', 400);
+        }
+
+        // 勤務時間を再計算
+        $startTime = Carbon::createFromFormat('H:i:s', $request->start_time);
+        $endTime = $request->end_time ? Carbon::createFromFormat('H:i:s', $request->end_time) : null;
+        
+        $durationHours = 0;
+        if ($endTime) {
+            if ($endTime->lessThan($startTime)) {
+                $endTime->addDay();
+            }
+            $durationHours = $endTime->diffInMinutes($startTime) / 60;
+            if ($shift->break_duration) {
+                $durationHours -= ($shift->break_duration / 60);
+            }
+        }
+
+        $shift->update([
+            'start_time' => $request->start_time,
+            'end_time' => $request->end_time,
+            'duration_hours' => $durationHours,
+            'updated_by' => Auth::id(),
+        ]);
+
+        return $this->successResponse($shift, 'シフト時間を更新しました');
+    }
+
+    /**
+     * シフトの競合をチェック
+     * 
+     * @param Shift $shift
+     * @return bool
+     */
+    private function checkShiftConflict(Shift $shift): bool
+    {
+        // 同じ警備員が同じ時間帯に他のシフトに配置されているかチェック
+        $assignedGuardIds = $shift->assignments->pluck('guard_id');
+        
+        if ($assignedGuardIds->isEmpty()) {
+            return false;
+        }
+
+        $conflictingShifts = Shift::where('id', '!=', $shift->id)
+            ->where('shift_date', $shift->shift_date)
+            ->where('status', '!=', 'cancelled')
+            ->where(function($q) use ($shift) {
+                $q->whereBetween('start_time', [$shift->start_time, $shift->end_time])
+                  ->orWhereBetween('end_time', [$shift->start_time, $shift->end_time])
+                  ->orWhere(function($subQ) use ($shift) {
+                      $subQ->where('start_time', '<=', $shift->start_time)
+                           ->where('end_time', '>=', $shift->end_time);
+                  });
+            })
+            ->whereHas('assignments', function($q) use ($assignedGuardIds) {
+                $q->whereIn('guard_id', $assignedGuardIds);
+            })
+            ->exists();
+
+        return $conflictingShifts;
+    }
+
+    /**
+     * ステータスに応じた色を取得
+     * 
+     * @param string $status
+     * @return string
+     */
+    private function getStatusColor(string $status): string
+    {
+        return match($status) {
+            'scheduled' => '#0d6efd',
+            'in_progress' => '#198754',
+            'completed' => '#6c757d',
+            'cancelled' => '#dc3545',
+            default => '#0d6efd',
+        };
+    }
+
+    /**
+     * ステータスのテキストを取得
+     * 
+     * @param string $status
+     * @return string
+     */
+    private function getStatusText(string $status): string
+    {
+        return match($status) {
+            'scheduled' => '予定',
+            'in_progress' => '実行中',
+            'completed' => '完了',
+            'cancelled' => 'キャンセル',
+            default => '不明',
+        };
+    }
 }
