@@ -1,0 +1,858 @@
+@extends('layouts.app')
+
+@section('title', '新規契約作成')
+
+@section('content')
+<div class="container-fluid">
+    <!-- ページヘッダー -->
+    <div class="row mb-4">
+        <div class="col">
+            <div class="d-flex justify-content-between align-items-center">
+                <div>
+                    <h1 class="h2 mb-0">新規契約作成</h1>
+                    <p class="text-muted mb-0">Create New Contract</p>
+                </div>
+                <div class="d-flex gap-2">
+                    <a href="{{ route('contracts.index') }}" class="btn btn-outline-secondary">
+                        <i class="fas fa-arrow-left"></i> 一覧に戻る
+                    </a>
+                    <button type="button" class="btn btn-outline-info" onclick="loadTemplate()">
+                        <i class="fas fa-file-import"></i> テンプレート読み込み
+                    </button>
+                    @if(request('quotation_id'))
+                        <a href="{{ route('quotations.show', request('quotation_id')) }}" class="btn btn-outline-primary">
+                            <i class="fas fa-file-alt"></i> 元見積確認
+                        </a>
+                    @endif
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 見積からの契約作成情報 -->
+    @if(request('quotation_id') && isset($quotation))
+        <div class="alert alert-info mb-4">
+            <div class="d-flex align-items-center">
+                <i class="fas fa-info-circle me-2"></i>
+                <div>
+                    <strong>見積からの契約作成</strong><br>
+                    見積番号: {{ $quotation->quotation_number }} | 
+                    顧客: {{ $quotation->customer->name }} | 
+                    案件: {{ $quotation->project->name }} | 
+                    金額: ¥{{ number_format($quotation->total_amount) }}
+                </div>
+            </div>
+        </div>
+    @endif
+
+    <!-- 契約作成フォーム -->
+    <form id="contract-form" method="POST" action="{{ route('contracts.store') }}" enctype="multipart/form-data">
+        @csrf
+        @if(request('quotation_id'))
+            <input type="hidden" name="quotation_id" value="{{ request('quotation_id') }}">
+        @endif
+
+        <!-- 基本情報 -->
+        <div class="card mb-4">
+            <div class="card-header">
+                <h5 class="card-title mb-0">
+                    <i class="fas fa-info-circle"></i> 基本情報
+                </h5>
+            </div>
+            <div class="card-body">
+                <div class="row g-3">
+                    <div class="col-md-4">
+                        <label class="form-label required">契約番号</label>
+                        <input type="text" class="form-control @error('contract_number') is-invalid @enderror" 
+                               name="contract_number" value="{{ old('contract_number', $quotation->contract_number ?? '') }}" 
+                               placeholder="自動生成されます">
+                        @error('contract_number')
+                            <div class="invalid-feedback">{{ $message }}</div>
+                        @enderror
+                        <small class="form-text text-muted">空欄の場合は自動生成されます</small>
+                    </div>
+                    
+                    <div class="col-md-4">
+                        <label class="form-label required">顧客</label>
+                        <select class="form-select @error('customer_id') is-invalid @enderror" name="customer_id" required>
+                            <option value="">顧客を選択</option>
+                            @foreach($customers as $customer)
+                                <option value="{{ $customer->id }}" 
+                                        {{ old('customer_id', $quotation->customer_id ?? '') == $customer->id ? 'selected' : '' }}
+                                        data-projects="{{ $customer->projects->pluck('name', 'id')->toJson() }}">
+                                    {{ $customer->name }} ({{ $customer->company_type }})
+                                </option>
+                            @endforeach
+                        </select>
+                        @error('customer_id')
+                            <div class="invalid-feedback">{{ $message }}</div>
+                        @enderror
+                    </div>
+
+                    <div class="col-md-4">
+                        <label class="form-label required">案件</label>
+                        <select class="form-select @error('project_id') is-invalid @enderror" name="project_id" required>
+                            <option value="">案件を選択</option>
+                            @if(isset($quotation))
+                                <option value="{{ $quotation->project_id }}" selected>
+                                    {{ $quotation->project->name }}
+                                </option>
+                            @endif
+                        </select>
+                        @error('project_id')
+                            <div class="invalid-feedback">{{ $message }}</div>
+                        @enderror
+                    </div>
+
+                    <div class="col-md-6">
+                        <label class="form-label required">契約件名</label>
+                        <input type="text" class="form-control @error('title') is-invalid @enderror" 
+                               name="title" value="{{ old('title', $quotation->title ?? '') }}" required
+                               placeholder="契約の件名を入力">
+                        @error('title')
+                            <div class="invalid-feedback">{{ $message }}</div>
+                        @enderror
+                    </div>
+
+                    <div class="col-md-6">
+                        <label class="form-label">契約種別</label>
+                        <select class="form-select @error('contract_type') is-invalid @enderror" name="contract_type">
+                            <option value="">契約種別を選択</option>
+                            <option value="security_guard" {{ old('contract_type') === 'security_guard' ? 'selected' : '' }}>警備業務</option>
+                            <option value="facility_management" {{ old('contract_type') === 'facility_management' ? 'selected' : '' }}>施設管理</option>
+                            <option value="event_security" {{ old('contract_type') === 'event_security' ? 'selected' : '' }}>イベント警備</option>
+                            <option value="traffic_control" {{ old('contract_type') === 'traffic_control' ? 'selected' : '' }}>交通誘導</option>
+                            <option value="other" {{ old('contract_type') === 'other' ? 'selected' : '' }}>その他</option>
+                        </select>
+                        @error('contract_type')
+                            <div class="invalid-feedback">{{ $message }}</div>
+                        @enderror
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 契約期間・条件 -->
+        <div class="card mb-4">
+            <div class="card-header">
+                <h5 class="card-title mb-0">
+                    <i class="fas fa-calendar-alt"></i> 契約期間・条件
+                </h5>
+            </div>
+            <div class="card-body">
+                <div class="row g-3">
+                    <div class="col-md-3">
+                        <label class="form-label required">契約開始日</label>
+                        <input type="date" class="form-control @error('start_date') is-invalid @enderror" 
+                               name="start_date" value="{{ old('start_date') }}" required>
+                        @error('start_date')
+                            <div class="invalid-feedback">{{ $message }}</div>
+                        @enderror
+                    </div>
+
+                    <div class="col-md-3">
+                        <label class="form-label required">契約終了日</label>
+                        <input type="date" class="form-control @error('end_date') is-invalid @enderror" 
+                               name="end_date" value="{{ old('end_date') }}" required>
+                        @error('end_date')
+                            <div class="invalid-feedback">{{ $message }}</div>
+                        @enderror
+                    </div>
+
+                    <div class="col-md-3">
+                        <label class="form-label">契約期間（自動計算）</label>
+                        <input type="text" class="form-control" id="contract-duration" readonly 
+                               placeholder="開始日・終了日を入力すると自動計算">
+                    </div>
+
+                    <div class="col-md-3">
+                        <div class="form-check mt-4">
+                            <input class="form-check-input" type="checkbox" name="is_auto_renewal" value="1" 
+                                   {{ old('is_auto_renewal') ? 'checked' : '' }} id="auto-renewal">
+                            <label class="form-check-label" for="auto-renewal">
+                                自動更新契約
+                            </label>
+                        </div>
+                        <small class="form-text text-muted">期限前に自動的に契約を更新</small>
+                    </div>
+
+                    <div class="col-md-4" id="renewal-period" style="display: none;">
+                        <label class="form-label">更新期間</label>
+                        <select class="form-select" name="renewal_period">
+                            <option value="1_month">1ヶ月</option>
+                            <option value="3_months">3ヶ月</option>
+                            <option value="6_months">6ヶ月</option>
+                            <option value="1_year" selected>1年</option>
+                        </select>
+                    </div>
+
+                    <div class="col-md-4" id="renewal-notice" style="display: none;">
+                        <label class="form-label">更新通知期間</label>
+                        <select class="form-select" name="renewal_notice_period">
+                            <option value="30_days" selected>30日前</option>
+                            <option value="60_days">60日前</option>
+                            <option value="90_days">90日前</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="row g-3 mt-3">
+                    <div class="col-md-6">
+                        <label class="form-label">支払い条件</label>
+                        <select class="form-select @error('payment_terms') is-invalid @enderror" name="payment_terms">
+                            <option value="">支払い条件を選択</option>
+                            <option value="monthly_end" {{ old('payment_terms') === 'monthly_end' ? 'selected' : '' }}>月末締め翌月末払い</option>
+                            <option value="monthly_25" {{ old('payment_terms') === 'monthly_25' ? 'selected' : '' }}>25日締め翌月25日払い</option>
+                            <option value="bi_monthly" {{ old('payment_terms') === 'bi_monthly' ? 'selected' : '' }}>隔月払い</option>
+                            <option value="quarterly" {{ old('payment_terms') === 'quarterly' ? 'selected' : '' }}>四半期払い</option>
+                            <option value="upfront" {{ old('payment_terms') === 'upfront' ? 'selected' : '' }}>前払い</option>
+                            <option value="other" {{ old('payment_terms') === 'other' ? 'selected' : '' }}>その他</option>
+                        </select>
+                        @error('payment_terms')
+                            <div class="invalid-feedback">{{ $message }}</div>
+                        @enderror
+                    </div>
+
+                    <div class="col-md-6">
+                        <label class="form-label">支払い方法</label>
+                        <select class="form-select" name="payment_method">
+                            <option value="">支払い方法を選択</option>
+                            <option value="bank_transfer" {{ old('payment_method') === 'bank_transfer' ? 'selected' : '' }}>銀行振込</option>
+                            <option value="cash" {{ old('payment_method') === 'cash' ? 'selected' : '' }}>現金</option>
+                            <option value="check" {{ old('payment_method') === 'check' ? 'selected' : '' }}>小切手</option>
+                            <option value="credit_card" {{ old('payment_method') === 'credit_card' ? 'selected' : '' }}>クレジットカード</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 契約金額 -->
+        <div class="card mb-4">
+            <div class="card-header">
+                <h5 class="card-title mb-0">
+                    <i class="fas fa-yen-sign"></i> 契約金額
+                </h5>
+            </div>
+            <div class="card-body">
+                <div class="row g-3">
+                    <div class="col-md-4">
+                        <label class="form-label required">基本契約金額</label>
+                        <div class="input-group">
+                            <span class="input-group-text">¥</span>
+                            <input type="number" class="form-control @error('base_amount') is-invalid @enderror" 
+                                   name="base_amount" value="{{ old('base_amount', $quotation->total_amount ?? 0) }}" required
+                                   step="1" min="0" id="base-amount">
+                        </div>
+                        @error('base_amount')
+                            <div class="invalid-feedback">{{ $message }}</div>
+                        @enderror
+                    </div>
+
+                    <div class="col-md-4">
+                        <label class="form-label">消費税額</label>
+                        <div class="input-group">
+                            <span class="input-group-text">¥</span>
+                            <input type="number" class="form-control" name="tax_amount" 
+                                   value="{{ old('tax_amount', 0) }}" step="1" min="0" id="tax-amount" readonly>
+                        </div>
+                        <small class="form-text text-muted">基本金額の10%で自動計算</small>
+                    </div>
+
+                    <div class="col-md-4">
+                        <label class="form-label">総契約金額</label>
+                        <div class="input-group">
+                            <span class="input-group-text">¥</span>
+                            <input type="number" class="form-control fw-bold" name="total_amount" 
+                                   value="{{ old('total_amount', 0) }}" step="1" min="0" id="total-amount" readonly>
+                        </div>
+                    </div>
+
+                    <div class="col-md-6">
+                        <label class="form-label">単価形態</label>
+                        <select class="form-select" name="price_type">
+                            <option value="fixed" {{ old('price_type') === 'fixed' ? 'selected' : '' }}>固定金額</option>
+                            <option value="hourly" {{ old('price_type') === 'hourly' ? 'selected' : '' }}>時間単価</option>
+                            <option value="daily" {{ old('price_type') === 'daily' ? 'selected' : '' }}>日単価</option>
+                            <option value="monthly" {{ old('price_type') === 'monthly' ? 'selected' : '' }}>月額</option>
+                            <option value="per_person" {{ old('price_type') === 'per_person' ? 'selected' : '' }}>人数単価</option>
+                        </select>
+                    </div>
+
+                    <div class="col-md-6">
+                        <label class="form-label">単価</label>
+                        <div class="input-group">
+                            <span class="input-group-text">¥</span>
+                            <input type="number" class="form-control" name="unit_price" 
+                                   value="{{ old('unit_price', 0) }}" step="1" min="0">
+                            <span class="input-group-text" id="unit-suffix">/固定</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 金額詳細（見積から引き継ぎ） -->
+                @if(isset($quotation) && $quotation->items)
+                    <div class="mt-4">
+                        <h6>見積項目詳細</h6>
+                        <div class="table-responsive">
+                            <table class="table table-sm">
+                                <thead>
+                                    <tr>
+                                        <th>項目名</th>
+                                        <th>数量</th>
+                                        <th>単価</th>
+                                        <th>金額</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach($quotation->items as $item)
+                                        <tr>
+                                            <td>{{ $item['name'] }}</td>
+                                            <td>{{ $item['quantity'] }} {{ $item['unit'] ?? '' }}</td>
+                                            <td>¥{{ number_format($item['unit_price']) }}</td>
+                                            <td>¥{{ number_format($item['amount']) }}</td>
+                                        </tr>
+                                    @endforeach
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                @endif
+            </div>
+        </div>
+
+        <!-- 契約条件・特記事項 -->
+        <div class="card mb-4">
+            <div class="card-header">
+                <h5 class="card-title mb-0">
+                    <i class="fas fa-file-contract"></i> 契約条件・特記事項
+                </h5>
+            </div>
+            <div class="card-body">
+                <div class="row g-3">
+                    <div class="col-md-12">
+                        <label class="form-label">契約条件</label>
+                        <textarea class="form-control @error('terms_conditions') is-invalid @enderror" 
+                                  name="terms_conditions" rows="5" 
+                                  placeholder="契約に関する条件を記載してください">{{ old('terms_conditions', $quotation->terms_conditions ?? '') }}</textarea>
+                        @error('terms_conditions')
+                            <div class="invalid-feedback">{{ $message }}</div>
+                        @enderror
+                    </div>
+
+                    <div class="col-md-12">
+                        <label class="form-label">特記事項</label>
+                        <textarea class="form-control" name="special_notes" rows="3" 
+                                  placeholder="特別な条件や注意事項があれば記載してください">{{ old('special_notes') }}</textarea>
+                    </div>
+
+                    <div class="col-md-6">
+                        <label class="form-label">業務内容</label>
+                        <textarea class="form-control" name="work_content" rows="4" 
+                                  placeholder="具体的な業務内容を記載">{{ old('work_content', $quotation->description ?? '') }}</textarea>
+                    </div>
+
+                    <div class="col-md-6">
+                        <label class="form-label">履行場所</label>
+                        <textarea class="form-control" name="work_location" rows="4" 
+                                  placeholder="業務を履行する場所">{{ old('work_location') }}</textarea>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 責任者・担当者 -->
+        <div class="card mb-4">
+            <div class="card-header">
+                <h5 class="card-title mb-0">
+                    <i class="fas fa-users"></i> 責任者・担当者
+                </h5>
+            </div>
+            <div class="card-body">
+                <div class="row g-3">
+                    <div class="col-md-6">
+                        <label class="form-label">契約責任者</label>
+                        <select class="form-select" name="manager_id">
+                            <option value="">責任者を選択</option>
+                            @foreach($managers as $manager)
+                                <option value="{{ $manager->id }}" {{ old('manager_id') == $manager->id ? 'selected' : '' }}>
+                                    {{ $manager->name }} ({{ $manager->department ?? '' }})
+                                </option>
+                            @endforeach
+                        </select>
+                    </div>
+
+                    <div class="col-md-6">
+                        <label class="form-label">営業担当者</label>
+                        <select class="form-select" name="sales_person_id">
+                            <option value="">担当者を選択</option>
+                            @foreach($salesPersons as $person)
+                                <option value="{{ $person->id }}" {{ old('sales_person_id') == $person->id ? 'selected' : '' }}>
+                                    {{ $person->name }}
+                                </option>
+                            @endforeach
+                        </select>
+                    </div>
+
+                    <div class="col-md-6">
+                        <label class="form-label">顧客担当者名</label>
+                        <input type="text" class="form-control" name="customer_contact_name" 
+                               value="{{ old('customer_contact_name') }}" placeholder="顧客側の担当者名">
+                    </div>
+
+                    <div class="col-md-6">
+                        <label class="form-label">顧客担当者連絡先</label>
+                        <input type="text" class="form-control" name="customer_contact_info" 
+                               value="{{ old('customer_contact_info') }}" placeholder="電話番号・メールアドレス等">
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 添付ファイル -->
+        <div class="card mb-4">
+            <div class="card-header">
+                <h5 class="card-title mb-0">
+                    <i class="fas fa-paperclip"></i> 添付ファイル
+                </h5>
+            </div>
+            <div class="card-body">
+                <div class="row g-3">
+                    <div class="col-md-12">
+                        <label class="form-label">契約関連ファイル</label>
+                        <input type="file" class="form-control" name="attachments[]" multiple 
+                               accept=".pdf,.doc,.docx,.jpg,.jpeg,.png,.gif">
+                        <small class="form-text text-muted">
+                            PDF、Word、画像ファイル対応。複数ファイル選択可能。最大10MB/ファイル
+                        </small>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- フォームアクション -->
+        <div class="card">
+            <div class="card-body">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <button type="button" class="btn btn-outline-secondary" onclick="previewContract()">
+                            <i class="fas fa-eye"></i> プレビュー
+                        </button>
+                        <button type="button" class="btn btn-outline-info" onclick="saveAsDraft()">
+                            <i class="fas fa-save"></i> 下書き保存
+                        </button>
+                    </div>
+                    <div>
+                        <a href="{{ route('contracts.index') }}" class="btn btn-secondary">
+                            <i class="fas fa-times"></i> キャンセル
+                        </a>
+                        <button type="submit" class="btn btn-primary" name="action" value="create">
+                            <i class="fas fa-plus"></i> 契約作成
+                        </button>
+                        <button type="submit" class="btn btn-success" name="action" value="create_and_approve">
+                            <i class="fas fa-check"></i> 作成・承認
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </form>
+</div>
+
+<!-- テンプレート選択モーダル -->
+<div class="modal fade" id="templateModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">契約テンプレート選択</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="row g-3">
+                    <div class="col-md-6">
+                        <div class="card template-card" data-template="security_guard">
+                            <div class="card-body text-center">
+                                <i class="fas fa-shield-alt fa-3x text-primary mb-3"></i>
+                                <h5>警備業務契約</h5>
+                                <p class="text-muted">一般的な警備業務の契約テンプレート</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="card template-card" data-template="event_security">
+                            <div class="card-body text-center">
+                                <i class="fas fa-calendar-check fa-3x text-success mb-3"></i>
+                                <h5>イベント警備契約</h5>
+                                <p class="text-muted">イベント・催事の警備契約テンプレート</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="card template-card" data-template="facility_management">
+                            <div class="card-body text-center">
+                                <i class="fas fa-building fa-3x text-info mb-3"></i>
+                                <h5>施設管理契約</h5>
+                                <p class="text-muted">施設管理・巡回警備の契約テンプレート</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="card template-card" data-template="traffic_control">
+                            <div class="card-body text-center">
+                                <i class="fas fa-traffic-light fa-3x text-warning mb-3"></i>
+                                <h5>交通誘導契約</h5>
+                                <p class="text-muted">交通誘導警備の契約テンプレート</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">キャンセル</button>
+                <button type="button" class="btn btn-primary" onclick="applyTemplate()">適用</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- プレビューモーダル -->
+<div class="modal fade" id="previewModal" tabindex="-1">
+    <div class="modal-dialog modal-xl">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">契約書プレビュー</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div id="contract-preview" class="p-4">
+                    <!-- プレビュー内容がここに表示される -->
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">閉じる</button>
+                <button type="button" class="btn btn-primary" onclick="printPreview()">
+                    <i class="fas fa-print"></i> 印刷
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+@endsection
+
+@push('styles')
+<style>
+.required::after {
+    content: " *";
+    color: #dc3545;
+}
+
+.template-card {
+    cursor: pointer;
+    transition: all 0.3s ease;
+    border: 2px solid transparent;
+}
+
+.template-card:hover {
+    border-color: #0d6efd;
+    box-shadow: 0 0.5rem 1rem rgba(0, 0, 0, 0.15);
+}
+
+.template-card.selected {
+    border-color: #0d6efd;
+    background-color: #f8f9ff;
+}
+
+.input-group-text {
+    min-width: 50px;
+}
+
+.card-header {
+    background-color: #f8f9fa;
+}
+
+#contract-preview {
+    background-color: #fff;
+    font-size: 14px;
+    line-height: 1.6;
+}
+
+@media print {
+    .modal-header, .modal-footer {
+        display: none !important;
+    }
+    
+    #contract-preview {
+        padding: 0 !important;
+    }
+}
+</style>
+@endpush
+
+@push('scripts')
+<script>
+let selectedTemplate = null;
+
+$(document).ready(function() {
+    // 金額自動計算
+    $('#base-amount').on('input', calculateTotals);
+    
+    // 契約期間自動計算
+    $('input[name="start_date"], input[name="end_date"]').on('change', calculateDuration);
+    
+    // 自動更新チェックボックス
+    $('#auto-renewal').change(function() {
+        if (this.checked) {
+            $('#renewal-period, #renewal-notice').slideDown();
+        } else {
+            $('#renewal-period, #renewal-notice').slideUp();
+        }
+    });
+    
+    // 顧客選択時の案件リスト更新
+    $('select[name="customer_id"]').change(function() {
+        updateProjectList();
+    });
+    
+    // 単価形態変更時の表示更新
+    $('select[name="price_type"]').change(function() {
+        updateUnitSuffix();
+    });
+    
+    // テンプレートカード選択
+    $('.template-card').click(function() {
+        $('.template-card').removeClass('selected');
+        $(this).addClass('selected');
+        selectedTemplate = $(this).data('template');
+    });
+    
+    // フォームバリデーション
+    $('#contract-form').on('submit', function(e) {
+        if (!validateForm()) {
+            e.preventDefault();
+        }
+    });
+    
+    // 初期値設定
+    if ($('#auto-renewal').is(':checked')) {
+        $('#renewal-period, #renewal-notice').show();
+    }
+    
+    calculateTotals();
+    updateUnitSuffix();
+});
+
+/**
+ * 金額自動計算
+ */
+function calculateTotals() {
+    const baseAmount = parseFloat($('#base-amount').val()) || 0;
+    const taxAmount = Math.floor(baseAmount * 0.1);
+    const totalAmount = baseAmount + taxAmount;
+    
+    $('#tax-amount').val(taxAmount);
+    $('#total-amount').val(totalAmount);
+}
+
+/**
+ * 契約期間自動計算
+ */
+function calculateDuration() {
+    const startDate = new Date($('input[name="start_date"]').val());
+    const endDate = new Date($('input[name="end_date"]').val());
+    
+    if (startDate && endDate && endDate > startDate) {
+        const diffTime = Math.abs(endDate - startDate);
+        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+        const months = Math.floor(diffDays / 30);
+        const days = diffDays % 30;
+        
+        let duration = '';
+        if (months > 0) {
+            duration += months + 'ヶ月';
+        }
+        if (days > 0) {
+            duration += (duration ? ' ' : '') + days + '日';
+        }
+        
+        $('#contract-duration').val(duration || diffDays + '日');
+    } else {
+        $('#contract-duration').val('');
+    }
+}
+
+/**
+ * 案件リスト更新
+ */
+function updateProjectList() {
+    const customerId = $('select[name="customer_id"]').val();
+    const projectSelect = $('select[name="project_id"]');
+    
+    projectSelect.html('<option value="">案件を選択</option>');
+    
+    if (customerId) {
+        const selectedOption = $('select[name="customer_id"] option:selected');
+        const projects = selectedOption.data('projects');
+        
+        if (projects) {
+            Object.entries(projects).forEach(([id, name]) => {
+                projectSelect.append(`<option value="${id}">${name}</option>`);
+            });
+        }
+    }
+}
+
+/**
+ * 単価表示更新
+ */
+function updateUnitSuffix() {
+    const priceType = $('select[name="price_type"]').val();
+    const suffixMap = {
+        'fixed': '/固定',
+        'hourly': '/時間',
+        'daily': '/日',
+        'monthly': '/月',
+        'per_person': '/人'
+    };
+    
+    $('#unit-suffix').text(suffixMap[priceType] || '/固定');
+}
+
+/**
+ * テンプレート読み込み
+ */
+function loadTemplate() {
+    $('#templateModal').modal('show');
+}
+
+/**
+ * テンプレート適用
+ */
+function applyTemplate() {
+    if (!selectedTemplate) {
+        alert('テンプレートを選択してください。');
+        return;
+    }
+    
+    $.ajax({
+        url: '{{ route("contracts.template") }}',
+        method: 'GET',
+        data: { template: selectedTemplate },
+        success: function(data) {
+            // フォームにテンプレートデータを適用
+            if (data.contract_type) $('select[name="contract_type"]').val(data.contract_type);
+            if (data.payment_terms) $('select[name="payment_terms"]').val(data.payment_terms);
+            if (data.terms_conditions) $('textarea[name="terms_conditions"]').val(data.terms_conditions);
+            if (data.work_content) $('textarea[name="work_content"]').val(data.work_content);
+            
+            $('#templateModal').modal('hide');
+            alert('テンプレートを適用しました。');
+        },
+        error: function() {
+            alert('テンプレートの読み込みに失敗しました。');
+        }
+    });
+}
+
+/**
+ * プレビュー表示
+ */
+function previewContract() {
+    const formData = new FormData($('#contract-form')[0]);
+    
+    $.ajax({
+        url: '{{ route("contracts.preview") }}',
+        method: 'POST',
+        data: formData,
+        processData: false,
+        contentType: false,
+        success: function(html) {
+            $('#contract-preview').html(html);
+            $('#previewModal').modal('show');
+        },
+        error: function() {
+            alert('プレビューの生成に失敗しました。');
+        }
+    });
+}
+
+/**
+ * 下書き保存
+ */
+function saveAsDraft() {
+    const form = $('#contract-form');
+    const originalAction = form.attr('action');
+    
+    // 一時的にアクションを変更
+    form.attr('action', '{{ route("contracts.draft") }}');
+    
+    // hidden fieldを追加
+    $('<input>').attr({
+        type: 'hidden',
+        name: 'save_as_draft',
+        value: '1'
+    }).appendTo(form);
+    
+    form.submit();
+}
+
+/**
+ * プレビュー印刷
+ */
+function printPreview() {
+    const printContent = document.getElementById('contract-preview');
+    const printWindow = window.open('', '_blank');
+    
+    printWindow.document.write(`
+        <html>
+            <head>
+                <title>契約書</title>
+                <style>
+                    body { font-family: 'Hiragino Sans', 'Yu Gothic', sans-serif; }
+                    .contract-header { text-align: center; margin-bottom: 30px; }
+                    .contract-content { line-height: 1.8; }
+                    .signature-area { margin-top: 50px; }
+                </style>
+            </head>
+            <body>
+                ${printContent.innerHTML}
+            </body>
+        </html>
+    `);
+    
+    printWindow.document.close();
+    printWindow.print();
+}
+
+/**
+ * フォームバリデーション
+ */
+function validateForm() {
+    let isValid = true;
+    const requiredFields = [
+        'customer_id', 'project_id', 'title', 'start_date', 'end_date', 'base_amount'
+    ];
+    
+    requiredFields.forEach(field => {
+        const element = $(`[name="${field}"]`);
+        if (!element.val()) {
+            element.addClass('is-invalid');
+            isValid = false;
+        } else {
+            element.removeClass('is-invalid');
+        }
+    });
+    
+    // 日付検証
+    const startDate = new Date($('input[name="start_date"]').val());
+    const endDate = new Date($('input[name="end_date"]').val());
+    
+    if (endDate <= startDate) {
+        $('input[name="end_date"]').addClass('is-invalid');
+        alert('契約終了日は開始日より後の日付を設定してください。');
+        isValid = false;
+    }
+    
+    return isValid;
+}
+</script>
+@endpush
