@@ -162,7 +162,7 @@ class User extends Authenticatable
     /**
      * 警備員情報とのリレーション
      */
-    public function guard()
+    public function guardInfo()
     {
         return $this->hasOne(Guard::class, 'user_id');
     }
@@ -170,7 +170,7 @@ class User extends Authenticatable
     /**
      * 顧客情報とのリレーション
      */
-    public function customer()
+    public function customerInfo()
     {
         return $this->hasOne(Customer::class, 'user_id');
     }

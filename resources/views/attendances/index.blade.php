@@ -4,740 +4,879 @@
 
 @section('content')
 <div class="container-fluid">
-    <!-- ページヘッダー -->
-    <div class="row mb-4">
+    <div class="row">
         <div class="col-12">
-            <div class="d-flex justify-content-between align-items-center">
+            <!-- ページヘッダー -->
+            <div class="d-flex justify-content-between align-items-center mb-4">
                 <div>
-                    <nav aria-label="breadcrumb">
-                        <ol class="breadcrumb">
-                            <li class="breadcrumb-item"><a href="{{ route('dashboard.index') }}">ダッシュボード</a></li>
-                            <li class="breadcrumb-item active">勤怠管理</li>
-                        </ol>
-                    </nav>
-                    <h2 class="mb-1">
-                        <i class="bi bi-clock me-2"></i>
-                        勤怠管理
-                    </h2>
-                    <p class="text-muted mb-0">警備員の出退勤記録・承認・統計管理</p>
+                    <h1 class="h3 mb-0">勤怠管理</h1>
+                    <p class="text-muted mb-0">出退勤記録の管理と承認を行います</p>
                 </div>
                 <div class="d-flex gap-2">
-                    <button class="btn btn-outline-success" id="bulkApprove">
-                        <i class="bi bi-check-all me-1"></i>
-                        一括承認
-                    </button>
-                    <button class="btn btn-outline-primary" id="exportAttendances">
-                        <i class="bi bi-download me-1"></i>
-                        エクスポート
+                    @can('create', App\Models\Attendance::class)
+                        <a href="{{ route('attendances.create') }}" class="btn btn-primary">
+                            <i class="fas fa-clock"></i> 新規勤怠記録
+                        </a>
+                    @endcan
+                    <button type="button" class="btn btn-success" id="quickCheckInOut">
+                        <i class="fas fa-stopwatch"></i> 簡易打刻
                     </button>
                     <div class="dropdown">
-                        <button class="btn btn-primary dropdown-toggle" type="button" data-bs-toggle="dropdown">
-                            <i class="bi bi-plus me-1"></i>
-                            新規作成
+                        <button class="btn btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown">
+                            <i class="fas fa-download"></i> エクスポート
                         </button>
                         <ul class="dropdown-menu">
-                            <li><a class="dropdown-item" href="{{ route('attendances.create') }}">
-                                <i class="bi bi-plus-circle me-2"></i>手動記録
-                            </a></li>
-                            <li><a class="dropdown-item" href="#" onclick="bulkClockIn()">
-                                <i class="bi bi-clock me-2"></i>一括出勤
-                            </a></li>
-                            <li><hr class="dropdown-divider"></li>
-                            <li><a class="dropdown-item" href="{{ route('attendances.import') }}">
-                                <i class="bi bi-upload me-2"></i>CSV一括登録
-                            </a></li>
+                            <li><a class="dropdown-item" href="#" onclick="exportAttendances('csv')">CSV形式</a></li>
+                            <li><a class="dropdown-item" href="#" onclick="exportAttendances('excel')">Excel形式</a></li>
+                            <li><a class="dropdown-item" href="#" onclick="exportAttendances('pdf')">PDF形式</a></li>
                         </ul>
                     </div>
                 </div>
             </div>
-        </div>
-    </div>
-    
-    <!-- 検索・フィルターセクション -->
-    <div class="row mb-4">
-        <div class="col-12">
-            <div class="card">
+
+            <!-- 統計カード -->
+            <div class="row mb-4">
+                <div class="col-md-3">
+                    <div class="card bg-primary text-white">
+                        <div class="card-body">
+                            <div class="d-flex justify-content-between">
+                                <div>
+                                    <h5 class="card-title">本日の出勤者</h5>
+                                    <h2 class="mb-0" id="todayAttendees">{{ $statistics['today_attendees'] ?? 0 }}</h2>
+                                </div>
+                                <div class="align-self-center">
+                                    <i class="fas fa-user-check fa-2x opacity-75"></i>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="card bg-success text-white">
+                        <div class="card-body">
+                            <div class="d-flex justify-content-between">
+                                <div>
+                                    <h5 class="card-title">勤務中</h5>
+                                    <h2 class="mb-0" id="currentWorking">{{ $statistics['current_working'] ?? 0 }}</h2>
+                                </div>
+                                <div class="align-self-center">
+                                    <i class="fas fa-clock fa-2x opacity-75"></i>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="card bg-warning text-dark">
+                        <div class="card-body">
+                            <div class="d-flex justify-content-between">
+                                <div>
+                                    <h5 class="card-title">要承認</h5>
+                                    <h2 class="mb-0" id="pendingApproval">{{ $statistics['pending_approval'] ?? 0 }}</h2>
+                                </div>
+                                <div class="align-self-center">
+                                    <i class="fas fa-hourglass-half fa-2x opacity-75"></i>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="card bg-danger text-white">
+                        <div class="card-body">
+                            <div class="d-flex justify-content-between">
+                                <div>
+                                    <h5 class="card-title">異常・アラート</h5>
+                                    <h2 class="mb-0" id="alerts">{{ $statistics['alerts'] ?? 0 }}</h2>
+                                </div>
+                                <div class="align-self-center">
+                                    <i class="fas fa-exclamation-triangle fa-2x opacity-75"></i>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 検索・フィルターカード -->
+            <div class="card mb-4">
+                <div class="card-header">
+                    <h5 class="card-title mb-0">
+                        <i class="fas fa-search"></i> 検索・フィルター
+                        <button class="btn btn-sm btn-outline-secondary ms-2" type="button" data-bs-toggle="collapse" data-bs-target="#searchFilters">
+                            <i class="fas fa-filter"></i> 詳細フィルター
+                        </button>
+                    </h5>
+                </div>
                 <div class="card-body">
-                    <form id="searchForm" class="row g-3">
-                        <!-- 日付範囲 -->
-                        <div class="col-lg-2 col-md-6">
-                            <label class="form-label">開始日</label>
-                            <input type="date" class="form-control" name="start_date" 
-                                   value="{{ request('start_date', date('Y-m-d', strtotime('-7 days'))) }}">
+                    <form id="searchForm" method="GET">
+                        <div class="row">
+                            <div class="col-md-3">
+                                <label for="search" class="form-label">検索キーワード</label>
+                                <input type="text" class="form-control" id="search" name="search" 
+                                       value="{{ request('search') }}" placeholder="警備員名、現場名など">
+                            </div>
+                            <div class="col-md-2">
+                                <label for="date_from" class="form-label">開始日</label>
+                                <input type="date" class="form-control" id="date_from" name="date_from" 
+                                       value="{{ request('date_from', date('Y-m-01')) }}">
+                            </div>
+                            <div class="col-md-2">
+                                <label for="date_to" class="form-label">終了日</label>
+                                <input type="date" class="form-control" id="date_to" name="date_to" 
+                                       value="{{ request('date_to', date('Y-m-d')) }}">
+                            </div>
+                            <div class="col-md-2">
+                                <label for="status" class="form-label">ステータス</label>
+                                <select class="form-select" id="status" name="status">
+                                    <option value="">すべて</option>
+                                    <option value="pending" {{ request('status') === 'pending' ? 'selected' : '' }}>承認待ち</option>
+                                    <option value="approved" {{ request('status') === 'approved' ? 'selected' : '' }}>承認済み</option>
+                                    <option value="rejected" {{ request('status') === 'rejected' ? 'selected' : '' }}>差し戻し</option>
+                                    <option value="working" {{ request('status') === 'working' ? 'selected' : '' }}>勤務中</option>
+                                </select>
+                            </div>
+                            <div class="col-md-3">
+                                <label class="form-label">&nbsp;</label>
+                                <div class="d-flex gap-2">
+                                    <button type="submit" class="btn btn-primary">
+                                        <i class="fas fa-search"></i> 検索
+                                    </button>
+                                    <a href="{{ route('attendances.index') }}" class="btn btn-outline-secondary">
+                                        <i class="fas fa-undo"></i> リセット
+                                    </a>
+                                </div>
+                            </div>
                         </div>
-                        <div class="col-lg-2 col-md-6">
-                            <label class="form-label">終了日</label>
-                            <input type="date" class="form-control" name="end_date" 
-                                   value="{{ request('end_date', date('Y-m-d')) }}">
-                        </div>
-                        
-                        <!-- 警備員検索 -->
-                        <div class="col-lg-2 col-md-6">
-                            <label class="form-label">警備員</label>
-                            <select class="form-select" name="guard_id">
-                                <option value="">全て</option>
-                                @foreach($guards ?? [] as $guard)
-                                    <option value="{{ $guard->id }}" {{ request('guard_id') == $guard->id ? 'selected' : '' }}>
-                                        {{ $guard->name }}
-                                    </option>
-                                @endforeach
-                            </select>
-                        </div>
-                        
-                        <!-- プロジェクト -->
-                        <div class="col-lg-2 col-md-6">
-                            <label class="form-label">プロジェクト</label>
-                            <select class="form-select" name="project_id">
-                                <option value="">全て</option>
-                                @foreach($projects ?? [] as $project)
-                                    <option value="{{ $project->id }}" {{ request('project_id') == $project->id ? 'selected' : '' }}>
-                                        {{ $project->name }}
-                                    </option>
-                                @endforeach
-                            </select>
-                        </div>
-                        
-                        <!-- ステータス -->
-                        <div class="col-lg-2 col-md-6">
-                            <label class="form-label">ステータス</label>
-                            <select class="form-select" name="status">
-                                <option value="">全て</option>
-                                <option value="present" {{ request('status') === 'present' ? 'selected' : '' }}>出勤</option>
-                                <option value="absent" {{ request('status') === 'absent' ? 'selected' : '' }}>欠勤</option>
-                                <option value="late" {{ request('status') === 'late' ? 'selected' : '' }}>遅刻</option>
-                                <option value="early_leave" {{ request('status') === 'early_leave' ? 'selected' : '' }}>早退</option>
-                                <option value="overtime" {{ request('status') === 'overtime' ? 'selected' : '' }}>残業</option>
-                            </select>
-                        </div>
-                        
-                        <!-- 承認状態 -->
-                        <div class="col-lg-2 col-md-6">
-                            <label class="form-label">承認状態</label>
-                            <select class="form-select" name="approval_status">
-                                <option value="">全て</option>
-                                <option value="pending" {{ request('approval_status') === 'pending' ? 'selected' : '' }}>承認待ち</option>
-                                <option value="approved" {{ request('approval_status') === 'approved' ? 'selected' : '' }}>承認済み</option>
-                                <option value="rejected" {{ request('approval_status') === 'rejected' ? 'selected' : '' }}>却下</option>
-                            </select>
-                        </div>
-                        
-                        <!-- 検索・リセットボタン -->
-                        <div class="col-12">
-                            <div class="d-flex gap-2">
-                                <button type="submit" class="btn btn-primary">
-                                    <i class="bi bi-search me-1"></i>
-                                    検索
-                                </button>
-                                <button type="button" class="btn btn-outline-secondary" id="resetSearch">
-                                    <i class="bi bi-arrow-clockwise me-1"></i>
-                                    リセット
-                                </button>
-                                <button type="button" class="btn btn-outline-info" id="quickFilters">
-                                    <i class="bi bi-funnel me-1"></i>
-                                    クイックフィルター
-                                </button>
+
+                        <!-- 詳細フィルター（折りたたみ） -->
+                        <div class="collapse mt-3" id="searchFilters">
+                            <div class="row">
+                                <div class="col-md-3">
+                                    <label for="project_id" class="form-label">プロジェクト</label>
+                                    <select class="form-select" id="project_id" name="project_id">
+                                        <option value="">すべてのプロジェクト</option>
+                                        @foreach($projects ?? [] as $project)
+                                            <option value="{{ $project->id }}" {{ request('project_id') == $project->id ? 'selected' : '' }}>
+                                                {{ $project->name }}
+                                            </option>
+                                        @endforeach
+                                    </select>
+                                </div>
+                                <div class="col-md-3">
+                                    <label for="guard_id" class="form-label">警備員</label>
+                                    <select class="form-select" id="guard_id" name="guard_id">
+                                        <option value="">すべての警備員</option>
+                                        @foreach($guards ?? [] as $guard)
+                                            <option value="{{ $guard->id }}" {{ request('guard_id') == $guard->id ? 'selected' : '' }}>
+                                                {{ $guard->name }}
+                                            </option>
+                                        @endforeach
+                                    </select>
+                                </div>
+                                <div class="col-md-2">
+                                    <label for="overtime_only" class="form-label">表示条件</label>
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" id="overtime_only" name="overtime_only" 
+                                               value="1" {{ request('overtime_only') ? 'checked' : '' }}>
+                                        <label class="form-check-label" for="overtime_only">
+                                            残業あり のみ
+                                        </label>
+                                    </div>
+                                </div>
+                                <div class="col-md-2">
+                                    <div class="form-check mt-4">
+                                        <input class="form-check-input" type="checkbox" id="anomaly_only" name="anomaly_only" 
+                                               value="1" {{ request('anomaly_only') ? 'checked' : '' }}>
+                                        <label class="form-check-label" for="anomaly_only">
+                                            異常あり のみ
+                                        </label>
+                                    </div>
+                                </div>
+                                <div class="col-md-2">
+                                    <div class="form-check mt-4">
+                                        <input class="form-check-input" type="checkbox" id="late_only" name="late_only" 
+                                               value="1" {{ request('late_only') ? 'checked' : '' }}>
+                                        <label class="form-check-label" for="late_only">
+                                            遅刻・早退 のみ
+                                        </label>
+                                    </div>
+                                </div>
                             </div>
                         </div>
                     </form>
                 </div>
             </div>
-        </div>
-    </div>
-    
-    <!-- 統計情報セクション -->
-    <div class="row mb-4">
-        <div class="col-lg-3 col-md-6 mb-3">
-            <div class="card text-center">
-                <div class="card-body">
-                    <i class="bi bi-people display-6 text-success mb-2"></i>
-                    <h4 class="mb-1" id="presentCount">{{ $statistics['present'] ?? 0 }}</h4>
-                    <small class="text-muted">出勤数</small>
-                </div>
-            </div>
-        </div>
-        <div class="col-lg-3 col-md-6 mb-3">
-            <div class="card text-center">
-                <div class="card-body">
-                    <i class="bi bi-person-x display-6 text-danger mb-2"></i>
-                    <h4 class="mb-1" id="absentCount">{{ $statistics['absent'] ?? 0 }}</h4>
-                    <small class="text-muted">欠勤数</small>
-                </div>
-            </div>
-        </div>
-        <div class="col-lg-3 col-md-6 mb-3">
-            <div class="card text-center">
-                <div class="card-body">
-                    <i class="bi bi-clock-history display-6 text-warning mb-2"></i>
-                    <h4 class="mb-1" id="pendingApproval">{{ $statistics['pending'] ?? 0 }}</h4>
-                    <small class="text-muted">承認待ち</small>
-                </div>
-            </div>
-        </div>
-        <div class="col-lg-3 col-md-6 mb-3">
-            <div class="card text-center">
-                <div class="card-body">
-                    <i class="bi bi-stopwatch display-6 text-info mb-2"></i>
-                    <h4 class="mb-1" id="totalHours">{{ $statistics['total_hours'] ?? 0 }}</h4>
-                    <small class="text-muted">総勤務時間</small>
-                </div>
-            </div>
-        </div>
-    </div>
-    
-    <!-- クイックフィルターボタン -->
-    <div class="row mb-3" id="quickFilterButtons" style="display: none;">
-        <div class="col-12">
-            <div class="d-flex gap-2 flex-wrap">
-                <button class="btn btn-outline-primary btn-sm" onclick="applyQuickFilter('today')">今日</button>
-                <button class="btn btn-outline-primary btn-sm" onclick="applyQuickFilter('yesterday')">昨日</button>
-                <button class="btn btn-outline-primary btn-sm" onclick="applyQuickFilter('thisWeek')">今週</button>
-                <button class="btn btn-outline-primary btn-sm" onclick="applyQuickFilter('lastWeek')">先週</button>
-                <button class="btn btn-outline-primary btn-sm" onclick="applyQuickFilter('thisMonth')">今月</button>
-                <button class="btn btn-outline-warning btn-sm" onclick="applyQuickFilter('pendingApproval')">承認待ち</button>
-                <button class="btn btn-outline-danger btn-sm" onclick="applyQuickFilter('absent')">欠勤のみ</button>
-                <button class="btn btn-outline-info btn-sm" onclick="applyQuickFilter('overtime')">残業のみ</button>
-            </div>
-        </div>
-    </div>
-    
-    <!-- 勤怠記録一覧テーブル -->
-    <div class="row">
-        <div class="col-12">
+
+            <!-- 勤怠記録テーブル -->
             <div class="card">
-                <div class="card-header">
-                    <div class="d-flex justify-content-between align-items-center">
-                        <h5 class="mb-0">
-                            <i class="bi bi-list me-2"></i>
-                            勤怠記録一覧
-                        </h5>
-                        <div class="d-flex align-items-center gap-3">
-                            <div class="form-check">
-                                <input class="form-check-input" type="checkbox" id="selectAll">
-                                <label class="form-check-label" for="selectAll">全選択</label>
-                            </div>
-                            <div class="d-flex align-items-center">
-                                <label class="me-2">表示件数:</label>
-                                <select class="form-select form-select-sm" style="width: auto;" id="perPage">
-                                    <option value="25" {{ request('per_page', 25) == 25 ? 'selected' : '' }}>25件</option>
-                                    <option value="50" {{ request('per_page') == 50 ? 'selected' : '' }}>50件</option>
-                                    <option value="100" {{ request('per_page') == 100 ? 'selected' : '' }}>100件</option>
-                                </select>
-                            </div>
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h5 class="card-title mb-0">
+                        <i class="fas fa-table"></i> 勤怠記録一覧
+                        <span class="badge bg-secondary ms-2">{{ $attendances->total() ?? 0 }}件</span>
+                    </h5>
+                    <div class="d-flex gap-2">
+                        <div class="btn-group" role="group">
+                            <input type="radio" class="btn-check" name="view_mode" id="table_view" value="table" checked>
+                            <label class="btn btn-outline-primary btn-sm" for="table_view">
+                                <i class="fas fa-table"></i> テーブル
+                            </label>
+                            <input type="radio" class="btn-check" name="view_mode" id="card_view" value="card">
+                            <label class="btn btn-outline-primary btn-sm" for="card_view">
+                                <i class="fas fa-th-large"></i> カード
+                            </label>
                         </div>
+                        @can('approve-attendances')
+                            <button class="btn btn-success btn-sm" onclick="bulkApprove()">
+                                <i class="fas fa-check"></i> 一括承認
+                            </button>
+                        @endcan
                     </div>
                 </div>
-                
                 <div class="card-body p-0">
-                    <div class="table-responsive">
-                        <table class="table table-hover mb-0 table-sortable" id="attendancesTable">
-                            <thead>
+                    <!-- テーブル表示 -->
+                    <div id="tableView" class="table-responsive">
+                        <table class="table table-hover mb-0">
+                            <thead class="table-light">
                                 <tr>
-                                    <th width="50">
-                                        <input type="checkbox" class="form-check-input" id="selectAllHeader">
-                                    </th>
-                                    <th data-sort="date">
-                                        <i class="bi bi-sort-alpha-down me-1"></i>
-                                        日付
-                                    </th>
-                                    <th data-sort="guard_name">警備員</th>
-                                    <th data-sort="project_name">プロジェクト</th>
-                                    <th data-sort="check_in_time">出勤時間</th>
-                                    <th data-sort="check_out_time">退勤時間</th>
-                                    <th data-sort="actual_hours">実働時間</th>
-                                    <th data-sort="status">ステータス</th>
-                                    <th data-sort="approval_status">承認状態</th>
-                                    <th>備考</th>
+                                    @can('approve-attendances')
+                                        <th width="40">
+                                            <input type="checkbox" id="selectAll" class="form-check-input">
+                                        </th>
+                                    @endcan
+                                    <th>日付</th>
+                                    <th>警備員</th>
+                                    <th>プロジェクト/現場</th>
+                                    <th>出勤時間</th>
+                                    <th>退勤時間</th>
+                                    <th>勤務時間</th>
+                                    <th>ステータス</th>
+                                    <th>異常・アラート</th>
                                     <th>操作</th>
                                 </tr>
                             </thead>
                             <tbody>
                                 @forelse($attendances ?? [] as $attendance)
-                                <tr class="attendance-row" data-attendance-id="{{ $attendance->id }}">
-                                    <td>
-                                        <input type="checkbox" class="form-check-input attendance-checkbox" value="{{ $attendance->id }}">
-                                    </td>
-                                    <td>
-                                        <div class="d-flex flex-column">
-                                            <strong>{{ $attendance->date ? $attendance->date->format('n/j') : '未設定' }}</strong>
-                                            <small class="text-muted">{{ $attendance->date ? $attendance->date->format('(D)') : '' }}</small>
-                                        </div>
-                                    </td>
-                                    <td>
-                                        <div class="d-flex align-items-center">
-                                            @if($attendance->guard->profile_photo)
-                                                <img src="{{ Storage::url($attendance->guard->profile_photo) }}" 
-                                                     class="rounded-circle me-2" width="30" height="30" 
-                                                     style="object-fit: cover;" alt="プロフィール">
-                                            @else
-                                                <div class="bg-primary rounded-circle d-flex align-items-center justify-content-center me-2" 
-                                                     style="width: 30px; height: 30px;">
-                                                    <span class="text-white fw-bold small">{{ mb_substr($attendance->guard->name, 0, 1) }}</span>
+                                    <tr class="attendance-row" data-id="{{ $attendance->id }}">
+                                        @can('approve-attendances')
+                                            <td>
+                                                <input type="checkbox" class="form-check-input attendance-checkbox" 
+                                                       value="{{ $attendance->id }}" name="attendance_ids[]">
+                                            </td>
+                                        @endcan
+                                        <td>
+                                            <strong>{{ $attendance->attendance_date ? $attendance->attendance_date->format('Y/m/d') : '未設定' }}</strong>
+                                            <br>
+                                            <small class="text-muted">{{ $attendance->attendance_date ? $attendance->attendance_date->format('(D)') : '' }}</small>
+                                        </td>
+                                        <td>
+                                            <div class="d-flex align-items-center">
+                                                @if(isset($attendance->guard->photo))
+                                                    <img src="{{ Storage::url($attendance->guard->photo) }}" 
+                                                         alt="{{ $attendance->guard->name }}" 
+                                                         class="rounded-circle me-2" 
+                                                         style="width: 40px; height: 40px; object-fit: cover;">
+                                                @else
+                                                    <div class="bg-secondary rounded-circle me-2 d-flex align-items-center justify-content-center" 
+                                                         style="width: 40px; height: 40px;">
+                                                        <i class="fas fa-user text-white"></i>
+                                                    </div>
+                                                @endif
+                                                <div>
+                                                    <strong>{{ $attendance->guard->name ?? '未設定' }}</strong>
+                                                    <br>
+                                                    <small class="text-muted">ID: {{ $attendance->guard->employee_id ?? '' }}</small>
                                                 </div>
-                                            @endif
-                                            <div>
-                                                <div class="fw-bold">{{ $attendance->guard->name }}</div>
-                                                <small class="text-muted">{{ $attendance->guard->employee_id }}</small>
                                             </div>
-                                        </div>
-                                    </td>
-                                    <td>
-                                        <div class="d-flex flex-column">
+                                        </td>
+                                        <td>
                                             <strong>{{ $attendance->shift->project->name ?? '未設定' }}</strong>
-                                            <small class="text-muted">{{ $attendance->shift->project->location ?? '' }}</small>
-                                        </div>
-                                    </td>
-                                    <td>
-                                        <div class="d-flex flex-column">
-                                            <span class="fw-bold">{{ $attendance->check_in_time ? $attendance->check_in_time->format('H:i') : '-' }}</span>
-                                            @if($attendance->check_in_time && $attendance->shift)
-                                                <small class="text-{{ $attendance->check_in_time <= $attendance->shift->start_time ? 'success' : 'warning' }}">
-                                                    (予定: {{ $attendance->shift->start_time ?? '-' }})
-                                                </small>
+                                            <br>
+                                            <small class="text-muted">{{ $attendance->shift->location ?? '' }}</small>
+                                        </td>
+                                        <td>
+                                            <div class="d-flex align-items-center">
+                                                <span class="fw-bold">{{ $attendance->clock_in ? $attendance->clock_in->format('H:i') : '未打刻' }}</span>
+                                                @if($attendance->clock_in && method_exists($attendance, 'isLate') && $attendance->isLate())
+                                                    <span class="badge bg-warning ms-2">遅刻</span>
+                                                @endif
+                                                @if($attendance->clock_in_photo ?? false)
+                                                    <i class="fas fa-camera text-primary ms-1" title="写真あり"></i>
+                                                @endif
+                                                @if($attendance->clock_in_location ?? false)
+                                                    <i class="fas fa-map-marker-alt text-success ms-1" title="GPS記録あり"></i>
+                                                @endif
+                                            </div>
+                                            @if($attendance->clock_in_note ?? false)
+                                                <small class="text-muted d-block">{{ Str::limit($attendance->clock_in_note, 30) }}</small>
                                             @endif
-                                        </div>
-                                    </td>
-                                    <td>
-                                        <div class="d-flex flex-column">
-                                            <span class="fw-bold">{{ $attendance->check_out_time ? $attendance->check_out_time->format('H:i') : '-' }}</span>
-                                            @if($attendance->check_out_time && $attendance->shift)
-                                                <small class="text-{{ $attendance->check_out_time >= $attendance->shift->end_time ? 'success' : 'warning' }}">
-                                                    (予定: {{ $attendance->shift->end_time ?? '-' }})
-                                                </small>
+                                        </td>
+                                        <td>
+                                            <div class="d-flex align-items-center">
+                                                <span class="fw-bold">{{ $attendance->clock_out ? $attendance->clock_out->format('H:i') : '勤務中' }}</span>
+                                                @if($attendance->clock_out && method_exists($attendance, 'isEarlyLeave') && $attendance->isEarlyLeave())
+                                                    <span class="badge bg-warning ms-2">早退</span>
+                                                @endif
+                                                @if($attendance->clock_out_photo ?? false)
+                                                    <i class="fas fa-camera text-primary ms-1" title="写真あり"></i>
+                                                @endif
+                                                @if($attendance->clock_out_location ?? false)
+                                                    <i class="fas fa-map-marker-alt text-success ms-1" title="GPS記録あり"></i>
+                                                @endif
+                                            </div>
+                                            @if($attendance->clock_out_note ?? false)
+                                                <small class="text-muted d-block">{{ Str::limit($attendance->clock_out_note, 30) }}</small>
                                             @endif
-                                        </div>
-                                    </td>
-                                    <td>
-                                        <div class="d-flex flex-column">
-                                            <strong>{{ $attendance->actual_hours ? $attendance->actual_hours . 'h' : '-' }}</strong>
-                                            @if($attendance->break_time)
-                                                <small class="text-muted">休憩{{ $attendance->break_time }}分</small>
+                                        </td>
+                                        <td>
+                                            @if($attendance->total_work_hours ?? false)
+                                                <span class="fw-bold">{{ number_format($attendance->total_work_hours, 2) }}時間</span>
+                                                @if(($attendance->overtime_hours ?? 0) > 0)
+                                                    <br>
+                                                    <small class="text-warning">残業: {{ number_format($attendance->overtime_hours, 2) }}h</small>
+                                                @endif
+                                                @if(($attendance->break_hours ?? 0) > 0)
+                                                    <br>
+                                                    <small class="text-muted">休憩: {{ number_format($attendance->break_hours, 2) }}h</small>
+                                                @endif
+                                            @else
+                                                <span class="text-muted">計算中</span>
                                             @endif
-                                        </div>
-                                    </td>
-                                    <td>
-                                        <span class="badge bg-{{ $attendance->getStatusColor() }}">
-                                            {{ $attendance->getStatusText() }}
-                                        </span>
-                                        @if($attendance->overtime_hours && $attendance->overtime_hours > 0)
-                                            <br><small class="text-info">残業{{ $attendance->overtime_hours }}h</small>
-                                        @endif
-                                    </td>
-                                    <td>
-                                        <div class="d-flex flex-column">
-                                            <span class="badge bg-{{ $attendance->getApprovalStatusColor() }}">
-                                                {{ $attendance->getApprovalStatusText() }}
-                                            </span>
-                                            @if($attendance->approved_by)
-                                                <small class="text-muted">by {{ $attendance->approver->name }}</small>
+                                        </td>
+                                        <td>
+                                            @switch($attendance->status ?? 'unknown')
+                                                @case('pending')
+                                                    <span class="badge bg-warning">承認待ち</span>
+                                                    @break
+                                                @case('approved')
+                                                    <span class="badge bg-success">承認済み</span>
+                                                    @break
+                                                @case('rejected')
+                                                    <span class="badge bg-danger">差し戻し</span>
+                                                    @break
+                                                @case('working')
+                                                    <span class="badge bg-primary">勤務中</span>
+                                                    @break
+                                                @default
+                                                    <span class="badge bg-secondary">{{ $attendance->status ?? '不明' }}</span>
+                                            @endswitch
+                                            @if($attendance->approved_by ?? false)
+                                                <br>
+                                                <small class="text-muted">承認者: {{ $attendance->approver->name ?? '' }}</small>
                                             @endif
-                                        </div>
-                                    </td>
-                                    <td>
-                                        @if($attendance->notes)
-                                            <span class="text-truncate" style="max-width: 100px;" title="{{ $attendance->notes }}">
-                                                {{ Str::limit($attendance->notes, 20) }}
-                                            </span>
-                                        @else
-                                            <span class="text-muted">-</span>
-                                        @endif
-                                    </td>
-                                    <td>
-                                        <div class="btn-group" role="group">
-                                            <a href="{{ route('attendances.show', $attendance) }}" 
-                                               class="btn btn-sm btn-outline-info" title="詳細表示">
-                                                <i class="bi bi-eye"></i>
-                                            </a>
-                                            <a href="{{ route('attendances.edit', $attendance) }}" 
-                                               class="btn btn-sm btn-outline-warning" title="編集">
-                                                <i class="bi bi-pencil"></i>
-                                            </a>
-                                            @if($attendance->approval_status === 'pending')
-                                                <button type="button" class="btn btn-sm btn-outline-success" 
-                                                        onclick="approveAttendance({{ $attendance->id }})" title="承認">
-                                                    <i class="bi bi-check"></i>
-                                                </button>
-                                                <button type="button" class="btn btn-sm btn-outline-danger" 
-                                                        onclick="rejectAttendance({{ $attendance->id }})" title="却下">
-                                                    <i class="bi bi-x"></i>
-                                                </button>
+                                        </td>
+                                        <td>
+                                            @if(method_exists($attendance, 'hasAnomalies') && $attendance->hasAnomalies())
+                                                <div class="text-danger">
+                                                    @if(method_exists($attendance, 'isLate') && $attendance->isLate())
+                                                        <i class="fas fa-clock" title="遅刻"></i>
+                                                    @endif
+                                                    @if(method_exists($attendance, 'isEarlyLeave') && $attendance->isEarlyLeave())
+                                                        <i class="fas fa-door-open" title="早退"></i>
+                                                    @endif
+                                                    @if(!($attendance->clock_in_location ?? false))
+                                                        <i class="fas fa-map-marker-alt" title="GPS記録なし"></i>
+                                                    @endif
+                                                    @if(($attendance->total_work_hours ?? 0) > 12)
+                                                        <i class="fas fa-exclamation-triangle" title="長時間勤務"></i>
+                                                    @endif
+                                                </div>
+                                            @else
+                                                <span class="text-success">
+                                                    <i class="fas fa-check-circle"></i> 正常
+                                                </span>
                                             @endif
-                                        </div>
-                                    </td>
-                                </tr>
+                                        </td>
+                                        <td>
+                                            <div class="btn-group">
+                                                <a href="{{ route('attendances.show', $attendance) }}" 
+                                                   class="btn btn-sm btn-outline-primary" title="詳細表示">
+                                                    <i class="fas fa-eye"></i>
+                                                </a>
+                                                @can('update', $attendance)
+                                                    <a href="{{ route('attendances.edit', $attendance) }}" 
+                                                       class="btn btn-sm btn-outline-success" title="編集">
+                                                        <i class="fas fa-edit"></i>
+                                                    </a>
+                                                @endcan
+                                                @can('approve-attendances')
+                                                    @if(($attendance->status ?? '') === 'pending')
+                                                        <button class="btn btn-sm btn-outline-success" 
+                                                                onclick="approveAttendance({{ $attendance->id }})" title="承認">
+                                                            <i class="fas fa-check"></i>
+                                                        </button>
+                                                        <button class="btn btn-sm btn-outline-warning" 
+                                                                onclick="rejectAttendance({{ $attendance->id }})" title="差し戻し">
+                                                            <i class="fas fa-times"></i>
+                                                        </button>
+                                                    @endif
+                                                @endcan
+                                            </div>
+                                        </td>
+                                    </tr>
                                 @empty
-                                <tr>
-                                    <td colspan="11" class="text-center py-5">
-                                        <i class="bi bi-clock-history display-1 text-muted"></i>
-                                        <div class="mt-3">
-                                            <h5 class="text-muted">勤怠記録がありません</h5>
-                                            <p class="text-muted">検索条件を変更するか、新しい記録を作成してください。</p>
-                                            <a href="{{ route('attendances.create') }}" class="btn btn-primary">
-                                                <i class="bi bi-plus-circle me-1"></i>
-                                                勤怠記録を作成
-                                            </a>
-                                        </div>
-                                    </td>
-                                </tr>
+                                    <tr>
+                                        <td colspan="10" class="text-center py-4">
+                                            <div class="text-muted">
+                                                <i class="fas fa-inbox fa-2x mb-3"></i>
+                                                <p>勤怠記録が見つかりません。</p>
+                                                @can('create', App\Models\Attendance::class)
+                                                    <a href="{{ route('attendances.create') }}" class="btn btn-primary">
+                                                        <i class="fas fa-plus"></i> 新規勤怠記録を作成
+                                                    </a>
+                                                @endcan
+                                            </div>
+                                        </td>
+                                    </tr>
                                 @endforelse
                             </tbody>
                         </table>
                     </div>
-                </div>
-                
-                @if(isset($attendances) && $attendances->hasPages())
-                <div class="card-footer">
-                    <div class="d-flex justify-content-between align-items-center">
-                        <div class="text-muted">
-                            {{ $attendances->firstItem() }}～{{ $attendances->lastItem() }}件 / {{ $attendances->total() }}件中
+
+                    <!-- カード表示（非表示） -->
+                    <div id="cardView" class="d-none p-3">
+                        <div class="row">
+                            @forelse($attendances ?? [] as $attendance)
+                                <div class="col-md-6 col-lg-4 mb-3">
+                                    <div class="card h-100 attendance-card" data-id="{{ $attendance->id }}">
+                                        <div class="card-body">
+                                            <div class="d-flex justify-content-between align-items-start mb-2">
+                                                <h6 class="card-title mb-0">{{ $attendance->attendance_date ? $attendance->attendance_date->format('Y/m/d (D)') : '未設定' }}</h6>
+                                                @switch($attendance->status ?? 'unknown')
+                                                    @case('pending')
+                                                        <span class="badge bg-warning">承認待ち</span>
+                                                        @break
+                                                    @case('approved')
+                                                        <span class="badge bg-success">承認済み</span>
+                                                        @break
+                                                    @case('rejected')
+                                                        <span class="badge bg-danger">差し戻し</span>
+                                                        @break
+                                                    @case('working')
+                                                        <span class="badge bg-primary">勤務中</span>
+                                                        @break
+                                                @endswitch
+                                            </div>
+                                            <div class="d-flex align-items-center mb-3">
+                                                @if(isset($attendance->guard->photo))
+                                                    <img src="{{ Storage::url($attendance->guard->photo) }}" 
+                                                         alt="{{ $attendance->guard->name }}" 
+                                                         class="rounded-circle me-2" 
+                                                         style="width: 40px; height: 40px; object-fit: cover;">
+                                                @else
+                                                    <div class="bg-secondary rounded-circle me-2 d-flex align-items-center justify-content-center" 
+                                                         style="width: 40px; height: 40px;">
+                                                        <i class="fas fa-user text-white"></i>
+                                                    </div>
+                                                @endif
+                                                <div>
+                                                    <strong>{{ $attendance->guard->name ?? '未設定' }}</strong>
+                                                    <br>
+                                                    <small class="text-muted">{{ $attendance->shift->project->name ?? '未設定' }}</small>
+                                                </div>
+                                            </div>
+                                            <div class="row text-center mb-3">
+                                                <div class="col-6">
+                                                    <div class="border-end">
+                                                        <small class="text-muted d-block">出勤</small>
+                                                        <strong>{{ $attendance->clock_in ? $attendance->clock_in->format('H:i') : '未打刻' }}</strong>
+                                                    </div>
+                                                </div>
+                                                <div class="col-6">
+                                                    <small class="text-muted d-block">退勤</small>
+                                                    <strong>{{ $attendance->clock_out ? $attendance->clock_out->format('H:i') : '勤務中' }}</strong>
+                                                </div>
+                                            </div>
+                                            @if($attendance->total_work_hours ?? false)
+                                                <div class="text-center mb-3">
+                                                    <span class="badge bg-light text-dark">
+                                                        勤務時間: {{ number_format($attendance->total_work_hours, 2) }}時間
+                                                    </span>
+                                                    @if(($attendance->overtime_hours ?? 0) > 0)
+                                                        <span class="badge bg-warning">
+                                                            残業: {{ number_format($attendance->overtime_hours, 2) }}h
+                                                        </span>
+                                                    @endif
+                                                </div>
+                                            @endif
+                                            @if(method_exists($attendance, 'hasAnomalies') && $attendance->hasAnomalies())
+                                                <div class="alert alert-warning alert-sm mb-3">
+                                                    <i class="fas fa-exclamation-triangle"></i> 異常あり
+                                                </div>
+                                            @endif
+                                        </div>
+                                        <div class="card-footer bg-transparent">
+                                            <div class="btn-group w-100">
+                                                <a href="{{ route('attendances.show', $attendance) }}" 
+                                                   class="btn btn-sm btn-outline-primary">詳細</a>
+                                                @can('update', $attendance)
+                                                    <a href="{{ route('attendances.edit', $attendance) }}" 
+                                                       class="btn btn-sm btn-outline-success">編集</a>
+                                                @endcan
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            @empty
+                                <div class="col-12 text-center py-4">
+                                    <div class="text-muted">
+                                        <i class="fas fa-inbox fa-2x mb-3"></i>
+                                        <p>勤怠記録が見つかりません。</p>
+                                    </div>
+                                </div>
+                            @endforelse
                         </div>
-                        {{ $attendances->links() }}
                     </div>
                 </div>
+
+                <!-- ページネーション -->
+                @if(isset($attendances) && $attendances->hasPages())
+                    <div class="card-footer">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <div class="text-muted">
+                                {{ $attendances->firstItem() }} - {{ $attendances->lastItem() }} / {{ $attendances->total() }}件
+                            </div>
+                            {{ $attendances->appends(request()->query())->links() }}
+                        </div>
+                    </div>
                 @endif
             </div>
         </div>
     </div>
 </div>
 
-<!-- 一括操作モーダル -->
-<div class="modal fade" id="bulkActionModal" tabindex="-1">
+<!-- 簡易打刻モーダル -->
+<div class="modal fade" id="quickCheckInOutModal" tabindex="-1">
     <div class="modal-dialog">
         <div class="modal-content">
             <div class="modal-header">
-                <h5 class="modal-title" id="bulkActionTitle">一括操作</h5>
+                <h5 class="modal-title">簡易打刻</h5>
                 <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
             </div>
             <div class="modal-body">
-                <div id="bulkActionContent">
-                    <!-- 一括操作内容はJavaScriptで動的に設定 -->
-                </div>
+                <form id="quickCheckInOutForm">
+                    <div class="mb-3">
+                        <label for="quick_guard_id" class="form-label">警備員選択</label>
+                        <select class="form-select" id="quick_guard_id" name="guard_id" required>
+                            <option value="">警備員を選択してください</option>
+                            @foreach($guards ?? [] as $guard)
+                                <option value="{{ $guard->id }}">{{ $guard->name }} ({{ $guard->employee_id }})</option>
+                            @endforeach
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label for="quick_action" class="form-label">打刻種別</label>
+                        <select class="form-select" id="quick_action" name="action" required>
+                            <option value="">選択してください</option>
+                            <option value="clock_in">出勤打刻</option>
+                            <option value="clock_out">退勤打刻</option>
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label for="quick_note" class="form-label">メモ（任意）</label>
+                        <textarea class="form-control" id="quick_note" name="note" rows="2" 
+                                  placeholder="特記事項があれば入力してください"></textarea>
+                    </div>
+                    <div class="form-check mb-3">
+                        <input class="form-check-input" type="checkbox" id="use_gps" name="use_gps" checked>
+                        <label class="form-check-label" for="use_gps">
+                            GPS位置情報を記録する
+                        </label>
+                    </div>
+                </form>
             </div>
             <div class="modal-footer">
                 <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">キャンセル</button>
-                <button type="button" class="btn btn-primary" id="executeBulkAction">実行</button>
+                <button type="button" class="btn btn-primary" onclick="submitQuickCheckInOut()">
+                    <i class="fas fa-clock"></i> 打刻実行
+                </button>
             </div>
         </div>
     </div>
 </div>
 
+<!-- 承認・差し戻しモーダル -->
+<div class="modal fade" id="approvalModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="approvalModalTitle">勤怠記録の承認・差し戻し</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <form id="approvalForm">
+                    <input type="hidden" id="approval_attendance_id" name="attendance_id">
+                    <input type="hidden" id="approval_action" name="action">
+                    
+                    <div class="mb-3">
+                        <label for="approval_note" class="form-label">コメント</label>
+                        <textarea class="form-control" id="approval_note" name="note" rows="3" 
+                                  placeholder="承認・差し戻しの理由やコメントを入力してください"></textarea>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">キャンセル</button>
+                <button type="button" class="btn btn-primary" onclick="submitApproval()" id="approvalSubmitBtn">
+                    実行
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+@endsection
+
 @push('styles')
 <style>
-    .table-sortable th[data-sort] {
-        cursor: pointer;
-        user-select: none;
-        transition: background-color 0.2s;
-    }
-    
-    .table-sortable th[data-sort]:hover {
-        background-color: rgba(0, 0, 0, 0.05);
-    }
-    
-    .table-sortable th.asc::after {
-        content: " ↑";
-        color: var(--bs-primary);
-    }
-    
-    .table-sortable th.desc::after {
-        content: " ↓";
-        color: var(--bs-primary);
-    }
-    
-    .attendance-row {
-        transition: all 0.3s ease;
-    }
-    
-    .attendance-row:hover {
-        background-color: rgba(0, 0, 0, 0.02);
-    }
-    
-    .attendance-row.selected {
-        background-color: rgba(13, 110, 253, 0.1);
-    }
-    
-    .text-truncate {
-        display: inline-block;
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-    }
-    
-    .btn-group .btn {
-        border-radius: 0;
-    }
-    
-    .btn-group .btn:first-child {
-        border-top-left-radius: 0.375rem;
-        border-bottom-left-radius: 0.375rem;
-    }
-    
-    .btn-group .btn:last-child {
-        border-top-right-radius: 0.375rem;
-        border-bottom-right-radius: 0.375rem;
-    }
-    
-    @media (max-width: 768px) {
-        .table-responsive {
-            font-size: 0.875rem;
-        }
-        
-        .btn-group .btn {
-            padding: 0.25rem 0.5rem;
-        }
-        
-        .d-flex.gap-2 {
-            flex-wrap: wrap;
-        }
-    }
+.attendance-card {
+    transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.attendance-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+}
+
+.alert-sm {
+    padding: 0.375rem 0.75rem;
+    font-size: 0.875rem;
+}
+
+.badge {
+    font-size: 0.75rem;
+}
+
+.table th {
+    font-weight: 600;
+    border-bottom: 2px solid #dee2e6;
+}
+
+.attendance-row:hover {
+    background-color: #f8f9fa;
+}
+
+.form-check-input:checked {
+    background-color: #0d6efd;
+    border-color: #0d6efd;
+}
+
+#selectAll:checked ~ .attendance-checkbox {
+    background-color: #0d6efd;
+    border-color: #0d6efd;
+}
 </style>
 @endpush
 
 @push('scripts')
 <script>
-    $(document).ready(function() {
-        // 統計情報の更新
-        updateStatistics();
-        
-        // 検索フォーム送信
-        $('#searchForm').on('submit', function(e) {
-            e.preventDefault();
-            performSearch();
-        });
-        
-        // リセットボタン
-        $('#resetSearch').click(function() {
-            $('#searchForm')[0].reset();
-            // 日付をデフォルト値に設定
-            $('input[name="start_date"]').val('{{ date("Y-m-d", strtotime("-7 days")) }}');
-            $('input[name="end_date"]').val('{{ date("Y-m-d") }}');
-            performSearch();
-        });
-        
-        // クイックフィルター表示切り替え
-        $('#quickFilters').click(function() {
-            $('#quickFilterButtons').toggle();
-        });
-        
-        // 表示件数変更
-        $('#perPage').change(function() {
-            updateUrlParameter('per_page', $(this).val());
-        });
-        
-        // 全選択
-        $('#selectAll, #selectAllHeader').change(function() {
-            const isChecked = $(this).is(':checked');
-            $('.attendance-checkbox').prop('checked', isChecked);
-            updateBulkActionButtons();
-            updateSelectedRows();
-        });
-        
-        // 個別選択
-        $(document).on('change', '.attendance-checkbox', function() {
-            updateSelectAllState();
-            updateBulkActionButtons();
-            updateSelectedRows();
-        });
-        
-        // 一括承認ボタン
-        $('#bulkApprove').click(function() {
-            bulkApproveAttendances();
-        });
-        
-        // エクスポートボタン
-        $('#exportAttendances').click(function() {
-            const params = new URLSearchParams($('#searchForm').serialize());
-            window.open(`{{ route('attendances.export') }}?${params.toString()}`, '_blank');
-        });
-        
-        // 定期更新（5分間隔）
-        setInterval(updateStatistics, 300000);
-    });
-    
-    // 検索実行
-    function performSearch() {
-        const formData = $('#searchForm').serialize();
-        window.location.href = `{{ route('attendances.index') }}?${formData}`;
-    }
-    
-    // 統計情報更新
-    function updateStatistics() {
-        const params = $('#searchForm').serialize();
-        
-        $.get('{{ route("attendances.stats") }}?' + params)
-            .done(function(data) {
-                $('#presentCount').text(data.present || 0);
-                $('#absentCount').text(data.absent || 0);
-                $('#pendingApproval').text(data.pending || 0);
-                $('#totalHours').text(data.total_hours || 0);
-            })
-            .fail(function() {
-                console.error('統計情報の取得に失敗しました');
-            });
-    }
-    
-    // クイックフィルター適用
-    function applyQuickFilter(filter) {
-        const today = new Date();
-        const form = $('#searchForm');
-        
-        // 全フィルターをリセット
-        form[0].reset();
-        
-        switch(filter) {
-            case 'today':
-                $('input[name="start_date"]').val(today.toISOString().split('T')[0]);
-                $('input[name="end_date"]').val(today.toISOString().split('T')[0]);
-                break;
-            case 'yesterday':
-                const yesterday = new Date(today);
-                yesterday.setDate(today.getDate() - 1);
-                $('input[name="start_date"]').val(yesterday.toISOString().split('T')[0]);
-                $('input[name="end_date"]').val(yesterday.toISOString().split('T')[0]);
-                break;
-            case 'thisWeek':
-                const weekStart = new Date(today);
-                weekStart.setDate(today.getDate() - today.getDay());
-                $('input[name="start_date"]').val(weekStart.toISOString().split('T')[0]);
-                $('input[name="end_date"]').val(today.toISOString().split('T')[0]);
-                break;
-            case 'lastWeek':
-                const lastWeekEnd = new Date(today);
-                lastWeekEnd.setDate(today.getDate() - today.getDay() - 1);
-                const lastWeekStart = new Date(lastWeekEnd);
-                lastWeekStart.setDate(lastWeekEnd.getDate() - 6);
-                $('input[name="start_date"]').val(lastWeekStart.toISOString().split('T')[0]);
-                $('input[name="end_date"]').val(lastWeekEnd.toISOString().split('T')[0]);
-                break;
-            case 'thisMonth':
-                const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
-                $('input[name="start_date"]').val(monthStart.toISOString().split('T')[0]);
-                $('input[name="end_date"]').val(today.toISOString().split('T')[0]);
-                break;
-            case 'pendingApproval':
-                $('select[name="approval_status"]').val('pending');
-                $('input[name="start_date"]').val('{{ date("Y-m-d", strtotime("-30 days")) }}');
-                $('input[name="end_date"]').val('{{ date("Y-m-d") }}');
-                break;
-            case 'absent':
-                $('select[name="status"]').val('absent');
-                $('input[name="start_date"]').val('{{ date("Y-m-d", strtotime("-7 days")) }}');
-                $('input[name="end_date"]').val('{{ date("Y-m-d") }}');
-                break;
-            case 'overtime':
-                $('select[name="status"]').val('overtime');
-                $('input[name="start_date"]').val('{{ date("Y-m-d", strtotime("-7 days")) }}');
-                $('input[name="end_date"]').val('{{ date("Y-m-d") }}');
-                break;
-        }
-        
-        performSearch();
-    }
-    
-    // 勤怠承認
-    function approveAttendance(attendanceId) {
-        if (confirm('この勤怠記録を承認しますか？')) {
-            $.post(`{{ route('attendances.approve', '') }}/${attendanceId}`, {
-                _token: '{{ csrf_token() }}'
-            })
-            .done(function(response) {
-                showSuccessMessage('勤怠記録を承認しました');
-                setTimeout(() => location.reload(), 1500);
-            })
-            .fail(function(xhr) {
-                showErrorMessage('承認処理に失敗しました');
-            });
-        }
-    }
-    
-    // 勤怠却下
-    function rejectAttendance(attendanceId) {
-        const reason = prompt('却下理由を入力してください：');
-        if (reason) {
-            $.post(`{{ route('attendances.reject', '') }}/${attendanceId}`, {
-                reason: reason,
-                _token: '{{ csrf_token() }}'
-            })
-            .done(function(response) {
-                showSuccessMessage('勤怠記録を却下しました');
-                setTimeout(() => location.reload(), 1500);
-            })
-            .fail(function(xhr) {
-                showErrorMessage('却下処理に失敗しました');
-            });
-        }
-    }
-    
-    // 一括承認
-    function bulkApproveAttendances() {
-        const selectedAttendances = $('.attendance-checkbox:checked').map(function() {
-            return $(this).val();
-        }).get();
-        
-        if (selectedAttendances.length === 0) {
-            alert('勤怠記録を選択してください');
-            return;
-        }
-        
-        if (confirm(`選択された${selectedAttendances.length}件の勤怠記録を承認しますか？`)) {
-            $.post('{{ route("attendances.bulk.approve") }}', {
-                attendance_ids: selectedAttendances,
-                _token: '{{ csrf_token() }}'
-            })
-            .done(function(response) {
-                showSuccessMessage(`${selectedAttendances.length}件の勤怠記録を承認しました`);
-                setTimeout(() => location.reload(), 1500);
-            })
-            .fail(function(xhr) {
-                showErrorMessage('一括承認に失敗しました');
-            });
-        }
-    }
-    
-    // 一括出勤
-    function bulkClockIn() {
-        // 一括出勤モーダル表示（実装省略）
-        console.log('一括出勤機能');
-    }
-    
-    // 全選択状態更新
-    function updateSelectAllState() {
-        const totalCheckboxes = $('.attendance-checkbox').length;
-        const checkedCheckboxes = $('.attendance-checkbox:checked').length;
-        
-        if (checkedCheckboxes === 0) {
-            $('#selectAll, #selectAllHeader').prop('indeterminate', false).prop('checked', false);
-        } else if (checkedCheckboxes === totalCheckboxes) {
-            $('#selectAll, #selectAllHeader').prop('indeterminate', false).prop('checked', true);
+$(document).ready(function() {
+    // 表示モード切り替え
+    $('input[name="view_mode"]').change(function() {
+        if ($(this).val() === 'card') {
+            $('#tableView').addClass('d-none');
+            $('#cardView').removeClass('d-none');
         } else {
-            $('#selectAll, #selectAllHeader').prop('indeterminate', true);
+            $('#cardView').addClass('d-none');
+            $('#tableView').removeClass('d-none');
         }
+    });
+
+    // 全選択チェックボックス
+    $('#selectAll').change(function() {
+        $('.attendance-checkbox').prop('checked', $(this).is(':checked'));
+    });
+
+    // 個別チェックボックス
+    $('.attendance-checkbox').change(function() {
+        const total = $('.attendance-checkbox').length;
+        const checked = $('.attendance-checkbox:checked').length;
+        $('#selectAll').prop('checked', total === checked);
+    });
+
+    // 簡易打刻モーダル
+    $('#quickCheckInOut').click(function() {
+        $('#quickCheckInOutModal').modal('show');
+    });
+
+    // 統計情報の自動更新（30秒ごと）
+    setInterval(updateStatistics, 30000);
+});
+
+// 統計情報更新
+function updateStatistics() {
+    $.get('{{ route("attendances.statistics") }}', function(data) {
+        $('#todayAttendees').text(data.today_attendees || 0);
+        $('#currentWorking').text(data.current_working || 0);
+        $('#pendingApproval').text(data.pending_approval || 0);
+        $('#alerts').text(data.alerts || 0);
+    }).catch(function() {
+        console.log('統計情報の更新に失敗しました');
+    });
+}
+
+// 簡易打刻実行
+function submitQuickCheckInOut() {
+    const form = $('#quickCheckInOutForm');
+    const formData = new FormData(form[0]);
+
+    // GPS位置情報を取得
+    if ($('#use_gps').is(':checked')) {
+        if (navigator.geolocation) {
+            navigator.geolocation.getCurrentPosition(
+                function(position) {
+                    formData.append('latitude', position.coords.latitude);
+                    formData.append('longitude', position.coords.longitude);
+                    formData.append('accuracy', position.coords.accuracy);
+                    executeQuickCheckInOut(formData);
+                },
+                function(error) {
+                    if (confirm('GPS位置情報の取得に失敗しました。位置情報なしで続行しますか？')) {
+                        executeQuickCheckInOut(formData);
+                    }
+                }
+            );
+        } else {
+            alert('GPS位置情報がサポートされていません。');
+            executeQuickCheckInOut(formData);
+        }
+    } else {
+        executeQuickCheckInOut(formData);
     }
+}
+
+// 簡易打刻実行（実際の送信）
+function executeQuickCheckInOut(formData) {
+    $.ajax({
+        url: '{{ route("attendances.quick-check") }}',
+        method: 'POST',
+        data: formData,
+        processData: false,
+        contentType: false,
+        headers: {
+            'X-CSRF-TOKEN': $('meta[name="csrf-token"]').attr('content')
+        },
+        success: function(response) {
+            $('#quickCheckInOutModal').modal('hide');
+            showSuccessMessage(response.message || '打刻が完了しました。');
+            location.reload();
+        },
+        error: function(xhr) {
+            const errors = xhr.responseJSON?.errors;
+            if (errors) {
+                let errorMessage = '';
+                Object.values(errors).forEach(function(messages) {
+                    errorMessage += messages.join('\n') + '\n';
+                });
+                showErrorMessage(errorMessage);
+            } else {
+                showErrorMessage(xhr.responseJSON?.message || '打刻に失敗しました。');
+            }
+        }
+    });
+}
+
+// 承認処理
+function approveAttendance(attendanceId) {
+    showApprovalModal(attendanceId, 'approve', '承認');
+}
+
+// 差し戻し処理
+function rejectAttendance(attendanceId) {
+    showApprovalModal(attendanceId, 'reject', '差し戻し');
+}
+
+// 承認・差し戻しモーダル表示
+function showApprovalModal(attendanceId, action, title) {
+    $('#approval_attendance_id').val(attendanceId);
+    $('#approval_action').val(action);
+    $('#approvalModalTitle').text(`勤怠記録の${title}`);
+    $('#approvalSubmitBtn').text(title);
+    $('#approvalModal').modal('show');
+}
+
+// 承認・差し戻し実行
+function submitApproval() {
+    const attendanceId = $('#approval_attendance_id').val();
+    const action = $('#approval_action').val();
+    const note = $('#approval_note').val();
+
+    $.ajax({
+        url: `{{ url('attendances') }}/${attendanceId}/${action}`,
+        method: 'POST',
+        data: {
+            note: note,
+            _token: $('meta[name="csrf-token"]').attr('content')
+        },
+        success: function(response) {
+            $('#approvalModal').modal('hide');
+            showSuccessMessage(response.message || '処理が完了しました。');
+            location.reload();
+        },
+        error: function(xhr) {
+            showErrorMessage(xhr.responseJSON?.message || '処理に失敗しました。');
+        }
+    });
+}
+
+// 一括承認
+function bulkApprove() {
+    const checkedIds = $('.attendance-checkbox:checked').map(function() {
+        return $(this).val();
+    }).get();
+
+    if (checkedIds.length === 0) {
+        showErrorMessage('承認する勤怠記録を選択してください。');
+        return;
+    }
+
+    if (!confirm(`選択した${checkedIds.length}件の勤怠記録を一括承認しますか？`)) {
+        return;
+    }
+
+    $.ajax({
+        url: '{{ route("attendances.bulk-approve") }}',
+        method: 'POST',
+        data: {
+            attendance_ids: checkedIds,
+            _token: $('meta[name="csrf-token"]').attr('content')
+        },
+        success: function(response) {
+            showSuccessMessage(response.message || '一括承認が完了しました。');
+            location.reload();
+        },
+        error: function(xhr) {
+            showErrorMessage(xhr.responseJSON?.message || '一括承認に失敗しました。');
+        }
+    });
+}
+
+// エクスポート処理
+function exportAttendances(format) {
+    const params = new URLSearchParams($('#searchForm').serialize());
+    params.append('format', format);
     
-    // 一括操作ボタン更新
-    function updateBulkActionButtons() {
-        const selectedCount = $('.attendance-checkbox:checked').length;
-        $('#bulkApprove').prop('disabled', selectedCount === 0);
+    const url = `{{ route('attendances.export') }}?${params.toString()}`;
+    window.open(url, '_blank');
+}
+
+// 成功メッセージ表示
+function showSuccessMessage(message) {
+    // Toast通知やアラートで成功メッセージを表示
+    if (typeof toastr !== 'undefined') {
+        toastr.success(message);
+    } else {
+        alert(message);
     }
-    
-    // 選択行のハイライト更新
-    function updateSelectedRows() {
-        $('.attendance-row').removeClass('selected');
-        $('.attendance-checkbox:checked').each(function() {
-            $(this).closest('.attendance-row').addClass('selected');
-        });
+}
+
+// エラーメッセージ表示
+function showErrorMessage(message) {
+    // Toast通知やアラートでエラーメッセージを表示
+    if (typeof toastr !== 'undefined') {
+        toastr.error(message);
+    } else {
+        alert(message);
     }
-    
-    // テーブルソート
-    function sortTable(column, order) {
-        updateUrlParameter('sort', column);
-        updateUrlParameter('order', order);
-    }
-    
-    // URLパラメータ更新
-    function updateUrlParameter(param, value) {
-        const url = new URL(window.location);
-        url.searchParams.set(param, value);
-        window.location.href = url.toString();
-    }
+}
 </script>
 @endpush
-@endsection
