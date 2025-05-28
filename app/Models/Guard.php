@@ -75,6 +75,14 @@ class Guard extends Model
         'health_info',
         'notes',
         'created_by',
+        // Google Maps関連
+        'location_lat',
+        'location_lng',
+        'location_accuracy',
+        'location_address',
+        'location_updated_at',
+        'location_sharing_enabled',
+        'location_history',
     ];
 
     /**
@@ -89,6 +97,13 @@ class Guard extends Model
         'available_times' => 'array',
         'health_info' => 'array',
         'deleted_at' => 'datetime',
+        // Google Maps関連
+        'location_lat' => 'decimal:8',
+        'location_lng' => 'decimal:8',
+        'location_accuracy' => 'decimal:2',
+        'location_updated_at' => 'datetime',
+        'location_sharing_enabled' => 'boolean',
+        'location_history' => 'array',
     ];
 
     /**
@@ -331,5 +346,243 @@ class Guard extends Model
             $info['email'] = $this->email;
         }
         return $info;
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Google Maps関連メソッド
+    |--------------------------------------------------------------------------
+    */
+
+    /**
+     * 現在のシフトを取得
+     */
+    public function getCurrentShift()
+    {
+        $now = now();
+        return $this->shifts()
+            ->where('shift_date', $now->format('Y-m-d'))
+            ->where('start_time', '<=', $now->format('H:i:s'))
+            ->where('end_time', '>=', $now->format('H:i:s'))
+            ->where('status', 'active')
+            ->with(['project', 'project.customer'])
+            ->first();
+    }
+
+    /**
+     * 現在位置を持っているかを判定
+     */
+    public function hasLocation(): bool
+    {
+        return !is_null($this->location_lat) && !is_null($this->location_lng);
+    }
+
+    /**
+     * 位置情報の有効性を判定（最新性チェック）
+     */
+    public function hasValidLocation(int $maxAgeMinutes = 30): bool
+    {
+        if (!$this->hasLocation() || !$this->location_updated_at) {
+            return false;
+        }
+
+        return $this->location_updated_at->diffInMinutes(now()) <= $maxAgeMinutes;
+    }
+
+    /**
+     * 位置情報が共有可能かを判定
+     */
+    public function canShareLocation(): bool
+    {
+        return $this->location_sharing_enabled && $this->hasLocation();
+    }
+
+    /**
+     * 座標から指定地点までの距離を計算（キロメートル）
+     */
+    public function getDistanceToLocation(float $lat, float $lng): ?float
+    {
+        if (!$this->hasLocation()) {
+            return null;
+        }
+
+        // ハヴァサイン公式を使用した距離計算
+        $earthRadius = 6371; // 地球の半径（km）
+        
+        $dLat = deg2rad($lat - $this->location_lat);
+        $dLng = deg2rad($lng - $this->location_lng);
+        
+        $a = sin($dLat/2) * sin($dLat/2) + 
+             cos(deg2rad($this->location_lat)) * cos(deg2rad($lat)) * 
+             sin($dLng/2) * sin($dLng/2);
+        
+        $c = 2 * atan2(sqrt($a), sqrt(1-$a));
+        
+        return $earthRadius * $c;
+    }
+
+    /**
+     * 指定プロジェクトまでの距離を取得
+     */
+    public function getDistanceToProject(Project $project): ?float
+    {
+        if (!$project->location_lat || !$project->location_lng) {
+            return null;
+        }
+
+        return $this->getDistanceToLocation($project->location_lat, $project->location_lng);
+    }
+
+    /**
+     * 近隣の警備員を検索
+     */
+    public function getNearbyGuards(float $radiusKm = 5, bool $activeOnly = true)
+    {
+        if (!$this->hasLocation()) {
+            return collect();
+        }
+
+        $query = static::where('id', '!=', $this->id)
+            ->whereNotNull('location_lat')
+            ->whereNotNull('location_lng')
+            ->where('location_sharing_enabled', true);
+
+        if ($activeOnly) {
+            $query->where('status', 'active');
+        }
+
+        // 距離計算のクエリ（簡易版）
+        $guards = $query->get()->filter(function($guard) use ($radiusKm) {
+            $distance = $this->getDistanceToLocation($guard->location_lat, $guard->location_lng);
+            return $distance !== null && $distance <= $radiusKm;
+        });
+
+        // 距離順でソート
+        return $guards->sortBy(function($guard) {
+            return $this->getDistanceToLocation($guard->location_lat, $guard->location_lng);
+        });
+    }
+
+    /**
+     * 近隣のプロジェクトを検索
+     */
+    public function getNearbyProjects(float $radiusKm = 10, bool $activeOnly = true)
+    {
+        if (!$this->hasLocation()) {
+            return collect();
+        }
+
+        $query = Project::whereNotNull('location_lat')
+            ->whereNotNull('location_lng');
+
+        if ($activeOnly) {
+            $query->where('status', 'active');
+        }
+
+        // 距離計算のクエリ（簡易版）
+        $projects = $query->get()->filter(function($project) use ($radiusKm) {
+            $distance = $this->getDistanceToLocation($project->location_lat, $project->location_lng);
+            return $distance !== null && $distance <= $radiusKm;
+        });
+
+        // 距離順でソート
+        return $projects->sortBy(function($project) {
+            return $this->getDistanceToLocation($project->location_lat, $project->location_lng);
+        })->map(function($project) {
+            $project->distance = $this->getDistanceToLocation($project->location_lat, $project->location_lng);
+            return $project;
+        });
+    }
+
+    /**
+     * 位置履歴を更新
+     */
+    public function updateLocationHistory(): void
+    {
+        if (!$this->hasLocation()) {
+            return;
+        }
+
+        $history = $this->location_history ?? [];
+        
+        // 新しい位置情報を追加
+        $newPoint = [
+            'lat' => $this->location_lat,
+            'lng' => $this->location_lng,
+            'accuracy' => $this->location_accuracy,
+            'address' => $this->location_address,
+            'timestamp' => now()->toISOString(),
+        ];
+
+        array_unshift($history, $newPoint);
+
+        // 24時間以内のデータのみ保持
+        $cutoffTime = now()->subHours(24);
+        $history = array_filter($history, function($point) use ($cutoffTime) {
+            return Carbon::parse($point['timestamp'])->gte($cutoffTime);
+        });
+
+        // 最大100件まで保持
+        if (count($history) > 100) {
+            $history = array_slice($history, 0, 100);
+        }
+
+        $this->location_history = $history;
+        $this->save();
+    }
+
+    /**
+     * 最後の位置更新からの経過時間を取得
+     */
+    public function getLocationAgeAttribute(): ?string
+    {
+        if (!$this->location_updated_at) {
+            return null;
+        }
+
+        $diff = $this->location_updated_at->diffForHumans();
+        return $diff;
+    }
+
+    /**
+     * 位置精度のランクを取得
+     */
+    public function getLocationAccuracyRankAttribute(): string
+    {
+        if (!$this->location_accuracy) {
+            return 'unknown';
+        }
+
+        if ($this->location_accuracy <= 5) {
+            return 'excellent';
+        } elseif ($this->location_accuracy <= 15) {
+            return 'good';
+        } elseif ($this->location_accuracy <= 50) {
+            return 'fair';
+        } else {
+            return 'poor';
+        }
+    }
+
+    /**
+     * Google Mapsで表示するための情報を取得
+     */
+    public function getMapInfoAttribute(): array
+    {
+        return [
+            'id' => $this->id,
+            'name' => $this->display_name,
+            'position' => [
+                'lat' => $this->location_lat,
+                'lng' => $this->location_lng,
+            ],
+            'accuracy' => $this->location_accuracy,
+            'address' => $this->location_address,
+            'updated_at' => $this->location_updated_at?->format('Y-m-d H:i:s'),
+            'status' => $this->status,
+            'current_shift' => $this->getCurrentShift()?->only(['id', 'project.name', 'start_time', 'end_time']),
+            'sharing_enabled' => $this->location_sharing_enabled,
+            'accuracy_rank' => $this->location_accuracy_rank,
+        ];
     }
 }

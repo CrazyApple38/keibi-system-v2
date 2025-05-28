@@ -664,6 +664,14 @@
                             </button>
                         </div>
 
+                        <!-- 売上分析 -->
+                        <div class="col-lg-2 col-md-4 col-sm-6">
+                            <a href="{{ route('dashboard.revenue.analysis') }}" class="btn btn-outline-success w-100 h-100 d-flex flex-column align-items-center justify-content-center p-3 quick-action-btn">
+                                <i class="fas fa-chart-line fs-4 mb-2"></i>
+                                <span>売上分析</span>
+                            </a>
+                        </div>
+
                         <!-- 設定・管理 -->
                         <div class="col-lg-2 col-md-4 col-sm-6">
                             <button class="btn btn-outline-secondary w-100 h-100 d-flex flex-column align-items-center justify-content-center p-3 quick-action-btn" data-bs-toggle="modal" data-bs-target="#settingsModal">

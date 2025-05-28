@@ -109,6 +109,23 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/analytics/customer', [DashboardController::class, 'getCustomerAnalytics'])->name('analytics.customer');
         Route::get('/analytics/operational', [DashboardController::class, 'getOperationalAnalytics'])->name('analytics.operational');
         
+        // 売上分析機能（詳細API）
+        Route::prefix('revenue-analysis')->name('revenue_analysis.')->group(function () {
+            Route::get('/', [DashboardController::class, 'revenueAnalysis'])->name('index');
+            Route::get('/overview', [DashboardController::class, 'getRevenueOverviewAnalysis'])->name('overview');
+            Route::get('/trend', [DashboardController::class, 'getDetailedRevenueTrendAnalysis'])->name('trend');
+            Route::get('/composition', [DashboardController::class, 'getRevenueCompositionAnalysis'])->name('composition');
+            Route::get('/customer', [DashboardController::class, 'getCustomerRevenueAnalysis'])->name('customer');
+            Route::get('/project', [DashboardController::class, 'getProjectRevenueAnalysis'])->name('project');
+            Route::get('/guard', [DashboardController::class, 'getGuardRevenueAnalysis'])->name('guard');
+            Route::get('/company', [DashboardController::class, 'getCompanyRevenueAnalysis'])->name('company');
+            Route::get('/forecast', [DashboardController::class, 'getRevenueForecastAnalysis'])->name('forecast');
+            Route::get('/profitability', [DashboardController::class, 'getProfitabilityAnalysis'])->name('profitability');
+            Route::get('/seasonality', [DashboardController::class, 'getSeasonalityAnalysis'])->name('seasonality');
+            Route::get('/performance', [DashboardController::class, 'getRevenuePerformanceAnalysis'])->name('performance');
+            Route::get('/export', [DashboardController::class, 'getRevenueExportData'])->name('export');
+        });
+        
         // 予測・トレンド分析
         Route::get('/trends/analysis', [DashboardController::class, 'getTrendAnalysis'])->name('trends.analysis');
         Route::get('/trends/market', [DashboardController::class, 'getMarketTrends'])->name('trends.market');
@@ -183,6 +200,43 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::delete('/{project}/guards/{guard}', [ProjectController::class, 'apiRemoveGuard'])->name('guards.remove');
         Route::get('/filter/by-status', [ProjectController::class, 'apiGetProjectsByStatus'])->name('filter.status');
         Route::get('/filter/by-customer/{customer}', [ProjectController::class, 'apiGetProjectsByCustomer'])->name('filter.customer');
+        
+        // Google Maps API機能
+        Route::get('/map/view', [ProjectController::class, 'mapView'])->name('map.view');
+        Route::get('/map/data', [ProjectController::class, 'mapView'])->name('map.data');
+        Route::post('/{project}/location/update', [ProjectController::class, 'updateLocation'])->name('location.update');
+        Route::get('/{project}/guards/nearby', [ProjectController::class, 'findNearbyGuards'])->name('guards.nearby');
+        Route::post('/{project}/placement/optimal', [ProjectController::class, 'calculateOptimalPlacement'])->name('placement.optimal');
+        Route::post('/routes/multi-project', [ProjectController::class, 'optimizeMultiProjectRoute'])->name('routes.multi_project');
+        Route::get('/{project}/area/monitor', [ProjectController::class, 'monitorGuardsInArea'])->name('area.monitor');
+        
+        // 位置情報管理API
+        Route::get('/locations/all', function() {
+            return response()->json([
+                'status' => 'success',
+                'data' => Project::whereNotNull('location_lat')
+                    ->whereNotNull('location_lng')
+                    ->with(['customer'])
+                    ->get()
+                    ->map(function($project) {
+                        return $project->map_info;
+                    })
+            ]);
+        })->name('locations.all');
+        
+        Route::get('/locations/active', function() {
+            return response()->json([
+                'status' => 'success',
+                'data' => Project::where('status', 'active')
+                    ->whereNotNull('location_lat')
+                    ->whereNotNull('location_lng')
+                    ->with(['customer'])
+                    ->get()
+                    ->map(function($project) {
+                        return $project->map_info;
+                    })
+            ]);
+        })->name('locations.active');
     });
     
     // =============================================================================
@@ -208,6 +262,46 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/filter/available', [GuardController::class, 'apiGetAvailableGuards'])->name('filter.available');
         Route::get('/filter/by-skills', [GuardController::class, 'apiGetGuardsBySkills'])->name('filter.skills');
         Route::get('/filter/by-qualifications', [GuardController::class, 'apiGetGuardsByQualifications'])->name('filter.qualifications');
+        
+        // Google Maps API機能
+        Route::get('/map/view', [GuardController::class, 'mapView'])->name('map.view');
+        Route::get('/map/data', [GuardController::class, 'mapView'])->name('map.data');
+        Route::post('/{guard}/location/update', [GuardController::class, 'updateLocation'])->name('location.update');
+        Route::get('/{guard}/location/history', [GuardController::class, 'getLocationHistory'])->name('location.history');
+        Route::get('/{guard}/projects/nearby', [GuardController::class, 'findNearbyProjects'])->name('projects.nearby');
+        Route::post('/routes/optimize', [GuardController::class, 'calculateOptimizedRoute'])->name('routes.optimize');
+        Route::post('/distance/calculate', [GuardController::class, 'calculateDistance'])->name('distance.calculate');
+        Route::post('/geocoding/address', [GuardController::class, 'geocodeAddress'])->name('geocoding.address');
+        Route::post('/geocoding/reverse', [GuardController::class, 'reverseGeocode'])->name('geocoding.reverse');
+        
+        // 位置情報管理API
+        Route::get('/locations/active', function() {
+            return response()->json([
+                'status' => 'success',
+                'data' => Guard::where('status', 'active')
+                    ->whereNotNull('location_lat')
+                    ->whereNotNull('location_lng')
+                    ->where('location_sharing_enabled', true)
+                    ->with(['user', 'company'])
+                    ->get()
+                    ->map(function($guard) {
+                        return $guard->map_info;
+                    })
+            ]);
+        })->name('locations.active');
+        
+        Route::get('/locations/all', function() {
+            return response()->json([
+                'status' => 'success', 
+                'data' => Guard::whereNotNull('location_lat')
+                    ->whereNotNull('location_lng')
+                    ->with(['user', 'company'])
+                    ->get()
+                    ->map(function($guard) {
+                        return $guard->map_info;
+                    })
+            ]);
+        })->name('locations.all');
     });
     
     // =============================================================================

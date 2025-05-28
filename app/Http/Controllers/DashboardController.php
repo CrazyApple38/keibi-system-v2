@@ -1,548 +1,10 @@
-<?php
 
-namespace App\Http\Controllers;
-
-use App\Models\User;
-use App\Models\Customer;
-use App\Models\Project;
-use App\Models\Guard;
-use App\Models\Shift;
-use App\Models\Attendance;
-use App\Models\Quotation;
-use App\Models\Contract;
-use App\Models\Invoice;
-use App\Models\DailyReport;
-use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Auth;
-use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Cache;
-use Carbon\Carbon;
-
-/**
- * 統合ダッシュボードController
- * 
- * 警備グループ3社統合管理システムの中核ダッシュボード機能
- * リアルタイム監視・KPI表示・3社統合データ管理
- */
-class DashboardController extends Controller
-{
-    /**
-     * 統合ダッシュボードページを表示
-     * 
-     * @param Request $request
-     * @return \Illuminate\View\View|\Illuminate\Http\JsonResponse
-     */
-    public function index(Request $request)
-    {
-        $user = Auth::user();
-        $period = $request->get('period', 'month');
-        $companyFilter = $request->get('company', 'all');
-        
-        $dashboardData = $this->getIntegratedDashboardData($user, $period, $companyFilter);
-
-        if ($request->expectsJson()) {
-            return $this->successResponse($dashboardData, 'ダッシュボードデータを取得しました');
-        }
-
-        return view('dashboard.index', compact('dashboardData'));
-    }
-
-    /**
-     * 統合ダッシュボード用の包括的データを取得
-     * 
-     * @param User $user
-     * @param string $period
-     * @param string $companyFilter
-     * @return array
-     */
-    private function getIntegratedDashboardData(User $user, string $period = 'month', string $companyFilter = 'all'): array
-    {
-        $cacheKey = "dashboard_data_{$user->id}_{$period}_{$companyFilter}";
-        
-        return Cache::remember($cacheKey, 300, function () use ($user, $period, $companyFilter) {
-            $dateRange = $this->getDateRange($period);
-            
-            return [
-                // 基本統計情報
-                'basic_stats' => $this->getEnhancedBasicStats($user, $companyFilter),
-                
-                // 拡張KPI
-                'enhanced_kpis' => $this->getEnhancedKPIs($user, $dateRange, $companyFilter),
-                
-                // 3社統合データ
-                'company_integration' => $this->getCompanyIntegrationData($user),
-                
-                // リアルタイム監視データ
-                'real_time_monitoring' => $this->getRealTimeMonitoringData($user, $companyFilter),
-                
-                // 高度分析データ
-                'advanced_analytics' => $this->getAdvancedAnalytics($user, $dateRange, $companyFilter),
-                
-                // 予測・トレンド分析
-                'trend_analysis' => $this->getTrendAnalysis($user, $companyFilter),
-                
-                // セキュリティ・コンプライアンス
-                'security_compliance' => $this->getSecurityComplianceData($user),
-                
-                // アラート・通知
-                'alerts_notifications' => $this->getAlertsNotifications($user, $companyFilter),
-                
-                // パフォーマンス指標
-                'performance_metrics' => $this->getPerformanceMetrics($user, $dateRange, $companyFilter),
-                
-                // システム情報
-                'system_info' => $this->getSystemInfo(),
-                
-                // ユーザー情報
-                'user_context' => $this->getUserContext($user)
-            ];
-        });
-    }
-
-    /**
-     * 拡張基本統計データを取得
-     * 
-     * @param User $user
-     * @param string $companyFilter
-     * @return array
-     */
-    private function getEnhancedBasicStats(User $user, string $companyFilter): array
-    {
-        $companiesQuery = $this->getCompanyFilterQuery($companyFilter, $user);
-        
-        return [
-            // 売上関連
-            'revenue' => [
-                'total_monthly' => $this->getMonthlyRevenue($companiesQuery),
-                'total_yearly' => $this->getYearlyRevenue($companiesQuery),
-                'growth_rate' => $this->getRevenueGrowthRate($companiesQuery),
-                'forecast' => $this->getRevenueForecast($companiesQuery)
-            ],
-            
-            // 人員関連
-            'personnel' => [
-                'total_guards' => $this->getTotalGuards($companiesQuery),
-                'active_guards' => $this->getActiveGuards($companiesQuery),
-                'guards_utilization' => $this->getGuardsUtilization($companiesQuery),
-                'guards_performance_avg' => $this->getGuardsPerformanceAverage($companiesQuery)
-            ],
-            
-            // 案件関連
-            'projects' => [
-                'total_projects' => $this->getTotalProjects($companiesQuery),
-                'active_projects' => $this->getActiveProjects($companiesQuery),
-                'completed_projects' => $this->getCompletedProjects($companiesQuery),
-                'success_rate' => $this->getProjectSuccessRate($companiesQuery)
-            ],
-            
-            // 運用関連
-            'operations' => [
-                'total_shifts' => $this->getTotalShifts($companiesQuery),
-                'shifts_today' => $this->getShiftsToday($companiesQuery),
-                'attendance_rate' => $this->getAttendanceRate($companiesQuery),
-                'incident_count' => $this->getIncidentCount($companiesQuery)
-            ]
-        ];
-    }
-
-    /**
-     * 拡張KPIデータを取得
-     * 
-     * @param User $user
-     * @param array $dateRange
-     * @param string $companyFilter
-     * @return array
-     */
-    private function getEnhancedKPIs(User $user, array $dateRange, string $companyFilter): array
-    {
-        $companiesQuery = $this->getCompanyFilterQuery($companyFilter, $user);
-        
-        return [
-            // 財務KPI
-            'financial' => [
-                'revenue_per_guard' => $this->getRevenuePerGuard($companiesQuery, $dateRange),
-                'profit_margin' => $this->getProfitMargin($companiesQuery, $dateRange),
-                'cost_per_shift' => $this->getCostPerShift($companiesQuery, $dateRange),
-                'billing_efficiency' => $this->getBillingEfficiency($companiesQuery, $dateRange)
-            ],
-            
-            // 運用KPI
-            'operational' => [
-                'guard_productivity' => $this->getGuardProductivity($companiesQuery, $dateRange),
-                'shift_fill_rate' => $this->getShiftFillRate($companiesQuery, $dateRange),
-                'response_time' => $this->getAverageResponseTime($companiesQuery, $dateRange),
-                'customer_satisfaction' => $this->getCustomerSatisfaction($companiesQuery, $dateRange)
-            ],
-            
-            // 品質KPI
-            'quality' => [
-                'incident_rate' => $this->getIncidentRate($companiesQuery, $dateRange),
-                'compliance_score' => $this->getComplianceScore($companiesQuery, $dateRange),
-                'training_completion_rate' => $this->getTrainingCompletionRate($companiesQuery, $dateRange),
-                'equipment_reliability' => $this->getEquipmentReliability($companiesQuery, $dateRange)
-            ],
-            
-            // 成長KPI
-            'growth' => [
-                'customer_acquisition' => $this->getCustomerAcquisition($companiesQuery, $dateRange),
-                'market_share' => $this->getMarketShare($companiesQuery, $dateRange),
-                'service_expansion' => $this->getServiceExpansion($companiesQuery, $dateRange),
-                'digital_adoption' => $this->getDigitalAdoption($companiesQuery, $dateRange)
-            ]
-        ];
-    }
-
-    /**
-     * 3社統合データを取得
-     * 
-     * @param User $user
-     * @return array
-     */
-    private function getCompanyIntegrationData(User $user): array
-    {
-        $companies = [
-            1 => '㈲東央警備',
-            2 => '㈱Nikkeiホールディングス', 
-            3 => '㈱全日本エンタープライズ'
-        ];
-        
-        $integrationData = [];
-        
-        foreach ($companies as $companyId => $companyName) {
-            $integrationData[$companyId] = [
-                'name' => $companyName,
-                'performance' => $this->getCompanyPerformance($companyId),
-                'revenue_share' => $this->getCompanyRevenueShare($companyId),
-                'guard_count' => $this->getCompanyGuardCount($companyId),
-                'active_projects' => $this->getCompanyActiveProjects($companyId),
-                'compliance_status' => $this->getCompanyComplianceStatus($companyId),
-                'recent_alerts' => $this->getCompanyRecentAlerts($companyId)
-            ];
-        }
-        
-        return [
-            'companies' => $integrationData,
-            'total_integration' => $this->getTotalIntegrationMetrics(),
-            'cross_company_projects' => $this->getCrossCompanyProjects(),
-            'shared_resources' => $this->getSharedResources(),
-            'consolidated_reporting' => $this->getConsolidatedReporting()
-        ];
-    }
-
-    /**
-     * リアルタイム監視データを取得
-     * 
-     * @param User $user
-     * @param string $companyFilter
-     * @return array
-     */
-    private function getRealTimeMonitoringData(User $user, string $companyFilter): array
-    {
-        return [
-            // 警備員位置情報
-            'guard_locations' => $this->getGuardLocations($companyFilter),
-            
-            // 進行中シフト
-            'active_shifts' => $this->getActiveShifts($companyFilter),
-            
-            // システム状態
-            'system_status' => [
-                'uptime' => $this->getSystemUptime(),
-                'response_time' => $this->getSystemResponseTime(),
-                'active_connections' => $this->getActiveConnections(),
-                'error_rate' => $this->getSystemErrorRate()
-            ],
-            
-            // セキュリティ監視
-            'security_monitoring' => [
-                'threat_level' => $this->getCurrentThreatLevel(),
-                'firewall_status' => $this->getFirewallStatus(),
-                'intrusion_detection' => $this->getIntrusionDetectionStatus(),
-                'security_scan_results' => $this->getLatestSecurityScan()
-            ],
-            
-            // 緊急事態監視
-            'emergency_monitoring' => [
-                'active_incidents' => $this->getActiveIncidents($companyFilter),
-                'emergency_response_status' => $this->getEmergencyResponseStatus(),
-                'evacuation_procedures' => $this->getEvacuationProcedures(),
-                'emergency_contacts' => $this->getEmergencyContacts()
-            ]
-        ];
-    }
-
-    /**
-     * 高度分析データを取得
-     * 
-     * @param User $user
-     * @param array $dateRange
-     * @param string $companyFilter
-     * @return array
-     */
-    private function getAdvancedAnalytics(User $user, array $dateRange, string $companyFilter): array
-    {
-        return [
-            // 売上分析
-            'revenue_analysis' => [
-                'trend' => $this->getRevenueTrendAnalysis($dateRange, $companyFilter),
-                'seasonality' => $this->getRevenueSeasonality($dateRange, $companyFilter),
-                'prediction' => $this->getRevenuePrediction($companyFilter),
-                'breakdown' => $this->getRevenueBreakdown($dateRange, $companyFilter)
-            ],
-            
-            // 警備員分析
-            'guard_analysis' => [
-                'performance_distribution' => $this->getGuardPerformanceDistribution($companyFilter),
-                'skill_analysis' => $this->getGuardSkillAnalysis($companyFilter),
-                'availability_patterns' => $this->getGuardAvailabilityPatterns($companyFilter),
-                'training_effectiveness' => $this->getTrainingEffectiveness($companyFilter)
-            ],
-            
-            // 顧客分析
-            'customer_analysis' => [
-                'satisfaction_trends' => $this->getCustomerSatisfactionTrends($dateRange, $companyFilter),
-                'retention_analysis' => $this->getCustomerRetentionAnalysis($companyFilter),
-                'value_segmentation' => $this->getCustomerValueSegmentation($companyFilter),
-                'churn_prediction' => $this->getCustomerChurnPrediction($companyFilter)
-            ],
-            
-            // 運用効率分析
-            'operational_analysis' => [
-                'resource_utilization' => $this->getResourceUtilization($dateRange, $companyFilter),
-                'cost_optimization' => $this->getCostOptimization($dateRange, $companyFilter),
-                'schedule_efficiency' => $this->getScheduleEfficiency($dateRange, $companyFilter),
-                'quality_metrics' => $this->getQualityMetrics($dateRange, $companyFilter)
-            ]
-        ];
-    }
-
-    /**
-     * トレンド分析データを取得
-     * 
-     * @param User $user
-     * @param string $companyFilter
-     * @return array
-     */
-    private function getTrendAnalysis(User $user, string $companyFilter): array
-    {
-        return [
-            // 市場トレンド
-            'market_trends' => [
-                'industry_growth' => $this->getIndustryGrowthTrend(),
-                'technology_adoption' => $this->getTechnologyAdoptionTrend(),
-                'regulatory_changes' => $this->getRegulatoryChangesTrend(),
-                'competition_analysis' => $this->getCompetitionAnalysis()
-            ],
-            
-            // ビジネストレンド
-            'business_trends' => [
-                'service_demand' => $this->getServiceDemandTrend($companyFilter),
-                'pricing_trends' => $this->getPricingTrends($companyFilter),
-                'customer_behavior' => $this->getCustomerBehaviorTrends($companyFilter),
-                'operational_patterns' => $this->getOperationalPatterns($companyFilter)
-            ],
-            
-            // 予測分析
-            'predictions' => [
-                'revenue_forecast' => $this->getRevenueForecast($companyFilter),
-                'demand_forecast' => $this->getDemandForecast($companyFilter),
-                'resource_needs' => $this->getResourceNeedsForecast($companyFilter),
-                'risk_assessment' => $this->getRiskAssessment($companyFilter)
-            ]
-        ];
-    }
-
-    /**
-     * セキュリティ・コンプライアンスデータを取得
-     * 
-     * @param User $user
-     * @return array
-     */
-    private function getSecurityComplianceData(User $user): array
-    {
-        return [
-            // 警備業法準拠
-            'security_industry_law' => [
-                'license_status' => $this->getSecurityLicenseStatus(),
-                'background_checks' => $this->getBackgroundCheckStatus(),
-                'training_compliance' => $this->getTrainingComplianceStatus(),
-                'documentation_status' => $this->getDocumentationStatus()
-            ],
-            
-            // データセキュリティ
-            'data_security' => [
-                'encryption_status' => $this->getEncryptionStatus(),
-                'access_controls' => $this->getAccessControlStatus(),
-                'audit_trails' => $this->getAuditTrailStatus(),
-                'backup_status' => $this->getBackupStatus()
-            ],
-            
-            // 個人情報保護
-            'privacy_protection' => [
-                'gdpr_compliance' => $this->getGDPRComplianceStatus(),
-                'data_retention' => $this->getDataRetentionStatus(),
-                'consent_management' => $this->getConsentManagementStatus(),
-                'breach_protocols' => $this->getBreachProtocolStatus()
-            ],
-            
-            // 監査・検査
-            'audits_inspections' => [
-                'internal_audits' => $this->getInternalAuditResults(),
-                'external_inspections' => $this->getExternalInspectionResults(),
-                'compliance_scores' => $this->getComplianceScores(),
-                'corrective_actions' => $this->getCorrectiveActions()
-            ]
-        ];
-    }
-
-    /**
-     * アラート・通知データを取得
-     * 
-     * @param User $user
-     * @param string $companyFilter
-     * @return array
-     */
-    private function getAlertsNotifications(User $user, string $companyFilter): array
-    {
-        return [
-            'critical_alerts' => $this->getCriticalAlerts($companyFilter),
-            'warning_alerts' => $this->getWarningAlerts($companyFilter),
-            'info_notifications' => $this->getInfoNotifications($companyFilter),
-            'system_notifications' => $this->getSystemNotifications(),
-            'maintenance_alerts' => $this->getMaintenanceAlerts(),
-            'compliance_alerts' => $this->getComplianceAlerts($companyFilter)
-        ];
-    }
-
-    /**
-     * パフォーマンス指標を取得
-     * 
-     * @param User $user
-     * @param array $dateRange
-     * @param string $companyFilter
-     * @return array
-     */
-    private function getPerformanceMetrics(User $user, array $dateRange, string $companyFilter): array
-    {
-        return [
-            'guard_performance' => $this->getGuardPerformanceMetrics($dateRange, $companyFilter),
-            'project_performance' => $this->getProjectPerformanceMetrics($dateRange, $companyFilter),
-            'customer_performance' => $this->getCustomerPerformanceMetrics($dateRange, $companyFilter),
-            'financial_performance' => $this->getFinancialPerformanceMetrics($dateRange, $companyFilter),
-            'operational_performance' => $this->getOperationalPerformanceMetrics($dateRange, $companyFilter)
-        ];
-    }
-
-    /**
-     * システム情報を取得
-     * 
-     * @return array
-     */
-    private function getSystemInfo(): array
-    {
-        return [
-            'version' => config('app.version', '1.0.0'),
-            'environment' => config('app.env'),
-            'last_updated' => Carbon::now()->format('Y-m-d H:i:s'),
-            'server_info' => [
-                'php_version' => PHP_VERSION,
-                'laravel_version' => app()->version(),
-                'memory_usage' => memory_get_usage(true),
-                'uptime' => $this->getSystemUptime()
-            ]
-        ];
-    }
-
-    /**
-     * ユーザーコンテキストを取得
-     * 
-     * @param User $user
-     * @return array
-     */
-    private function getUserContext(User $user): array
-    {
-        return [
-            'user_id' => $user->id,
-            'name' => $user->name,
-            'email' => $user->email,
-            'role' => $user->role,
-            'company_id' => $user->company_id,
-            'company_name' => $user->company->name ?? 'N/A',
-            'permissions' => $this->getUserPermissions($user),
-            'last_login' => $user->last_login_at?->format('Y-m-d H:i:s'),
-            'session_expires' => $this->getSessionExpiration(),
-            'preferences' => $this->getUserPreferences($user)
-        ];
-    }
-
-    /**
-     * チャートデータAPIエンドポイント
-     * 
-     * @param Request $request
-     * @return \Illuminate\Http\JsonResponse
-     */
-    public function chartData(Request $request)
-    {
-        $user = Auth::user();
-        $chartType = $request->get('type', 'revenue');
-        $period = $request->get('period', 'month');
-        $companyFilter = $request->get('company', 'all');
-        
-        $chartData = $this->getChartData($user, $chartType, $period, $companyFilter);
-        
-        return $this->successResponse($chartData, 'チャートデータを取得しました');
-    }
-
-    /**
-     * リアルタイムデータAPIエンドポイント
-     * 
-     * @param Request $request
-     * @return \Illuminate\Http\JsonResponse
-     */
-    public function realTimeData(Request $request)
-    {
-        $user = Auth::user();
-        $dataType = $request->get('type', 'all');
-        $companyFilter = $request->get('company', 'all');
-        
-        $realTimeData = $this->getRealTimeData($user, $dataType, $companyFilter);
-        
-        return $this->successResponse($realTimeData, 'リアルタイムデータを取得しました');
-    }
-
-    /**
-     * 緊急アラートAPIエンドポイント
-     * 
-     * @param Request $request
-     * @return \Illuminate\Http\JsonResponse
-     */
-    public function emergencyAlert(Request $request)
-    {
-        $user = Auth::user();
-        
-        $validatedData = $request->validate([
-            'type' => 'required|string',
-            'location' => 'nullable|string',
-            'description' => 'nullable|string',
-            'severity' => 'required|in:low,medium,high,critical'
-        ]);
-        
-        $alertId = $this->createEmergencyAlert($user, $validatedData);
-        
-        return $this->successResponse([
-            'alert_id' => $alertId,
-            'status' => 'created',
-            'response_time' => 'immediate'
-        ], '緊急アラートが正常に作成されました');
-    }
-
-    // === プライベートヘルパーメソッド ===
-
-    private function getDateRange(string $period): array
+    
+    // === 売上分析ヘルパーメソッド実装 ===
+    
+    private function getAnalysisDateRange(string $period): array
     {
         switch ($period) {
-            case 'today':
-                return [Carbon::today(), Carbon::today()->endOfDay()];
             case 'week':
                 return [Carbon::now()->startOfWeek(), Carbon::now()->endOfWeek()];
             case 'month':
@@ -551,29 +13,21 @@ class DashboardController extends Controller
                 return [Carbon::now()->startOfQuarter(), Carbon::now()->endOfQuarter()];
             case 'year':
                 return [Carbon::now()->startOfYear(), Carbon::now()->endOfYear()];
+            case 'last_month':
+                return [Carbon::now()->subMonth()->startOfMonth(), Carbon::now()->subMonth()->endOfMonth()];
+            case 'last_quarter':
+                return [Carbon::now()->subQuarter()->startOfQuarter(), Carbon::now()->subQuarter()->endOfQuarter()];
+            case 'last_year':
+                return [Carbon::now()->subYear()->startOfYear(), Carbon::now()->subYear()->endOfYear()];
             default:
-                return [Carbon::now()->startOfMonth(), Carbon::now()->endOfMonth()];
+                return [Carbon::now()->startOfYear(), Carbon::now()->endOfYear()];
         }
     }
 
-    private function getCompanyFilterQuery(string $companyFilter, User $user)
-    {
-        if ($companyFilter === 'all' && $user->role === 'admin') {
-            return null; // 全社データ
-        } elseif (is_numeric($companyFilter)) {
-            return $companyFilter;
-        } else {
-            return $user->company_id; // ユーザー所属会社のみ
-        }
-    }
-
-    // === 基本統計メソッド ===
-    
-    private function getMonthlyRevenue($companiesQuery): float
+    private function getRevenueByDateRange($companiesQuery, Carbon $startDate, Carbon $endDate): float
     {
         $query = Invoice::where('status', 'paid')
-            ->whereMonth('created_at', Carbon::now()->month)
-            ->whereYear('created_at', Carbon::now()->year);
+            ->whereBetween('created_at', [$startDate, $endDate]);
 
         if ($companiesQuery && $companiesQuery !== 'all') {
             $query->whereHas('contract.project.customer', function($subQ) use ($companiesQuery) {
@@ -584,776 +38,839 @@ class DashboardController extends Controller
         return (float) $query->sum('total_amount');
     }
 
-    private function getYearlyRevenue($companiesQuery): float
+    private function getRevenueOverviewAnalysis(User $user, array $dateRange, string $companyFilter): array
     {
-        $query = Invoice::where('status', 'paid')
-            ->whereYear('created_at', Carbon::now()->year);
-
-        if ($companiesQuery && $companiesQuery !== 'all') {
-            $query->whereHas('contract.project.customer', function($subQ) use ($companiesQuery) {
-                $subQ->where('company_id', $companiesQuery);
-            });
-        }
-
-        return (float) $query->sum('total_amount');
-    }
-
-    private function getTotalGuards($companiesQuery): int
-    {
-        $query = Guard::query();
-
-        if ($companiesQuery && $companiesQuery !== 'all') {
-            $query->where('company_id', $companiesQuery);
-        }
-
-        return $query->count();
-    }
-
-    private function getActiveGuards($companiesQuery): int
-    {
-        $query = Guard::where('status', 'active');
-
-        if ($companiesQuery && $companiesQuery !== 'all') {
-            $query->where('company_id', $companiesQuery);
-        }
-
-        return $query->count();
-    }
-
-    private function getTotalProjects($companiesQuery): int
-    {
-        $query = Project::query();
-
-        if ($companiesQuery && $companiesQuery !== 'all') {
-            $query->whereHas('customer', function($subQ) use ($companiesQuery) {
-                $subQ->where('company_id', $companiesQuery);
-            });
-        }
-
-        return $query->count();
-    }
-
-    private function getActiveProjects($companiesQuery): int
-    {
-        $query = Project::where('status', 'active');
-
-        if ($companiesQuery && $companiesQuery !== 'all') {
-            $query->whereHas('customer', function($subQ) use ($companiesQuery) {
-                $subQ->where('company_id', $companiesQuery);
-            });
-        }
-
-        return $query->count();
-    }
-
-    private function getCompletedProjects($companiesQuery): int
-    {
-        $query = Project::where('status', 'completed');
-
-        if ($companiesQuery && $companiesQuery !== 'all') {
-            $query->whereHas('customer', function($subQ) use ($companiesQuery) {
-                $subQ->where('company_id', $companiesQuery);
-            });
-        }
-
-        return $query->count();
-    }
-
-    private function getProjectSuccessRate($companiesQuery): float
-    {
-        $total = $this->getTotalProjects($companiesQuery);
-        $completed = $this->getCompletedProjects($companiesQuery);
-
-        return $total > 0 ? round(($completed / $total) * 100, 1) : 0.0;
-    }
-
-    private function getTotalShifts($companiesQuery): int
-    {
-        $query = Shift::query();
-
-        if ($companiesQuery && $companiesQuery !== 'all') {
-            $query->whereHas('project.customer', function($subQ) use ($companiesQuery) {
-                $subQ->where('company_id', $companiesQuery);
-            });
-        }
-
-        return $query->count();
-    }
-
-    private function getShiftsToday($companiesQuery): int
-    {
-        $query = Shift::whereDate('start_time', Carbon::today());
-
-        if ($companiesQuery && $companiesQuery !== 'all') {
-            $query->whereHas('project.customer', function($subQ) use ($companiesQuery) {
-                $subQ->where('company_id', $companiesQuery);
-            });
-        }
-
-        return $query->count();
-    }
-
-    private function getAttendanceRate($companiesQuery): float
-    {
-        $totalShifts = $this->getTotalShifts($companiesQuery);
+        $companiesQuery = $this->getCompanyFilterQuery($companyFilter, $user);
         
-        if ($totalShifts === 0) {
-            return 0.0;
-        }
-
-        $query = Attendance::where('status', 'present')
-            ->whereMonth('date', Carbon::now()->month);
-
-        if ($companiesQuery && $companiesQuery !== 'all') {
-            $query->whereHas('shift.project.customer', function($subQ) use ($companiesQuery) {
-                $subQ->where('company_id', $companiesQuery);
-            });
-        }
-
-        $presentAttendances = $query->count();
-
-        return round(($presentAttendances / $totalShifts) * 100, 1);
-    }
-
-    private function getIncidentCount($companiesQuery): int
-    {
-        $query = DailyReport::where('incident_flag', true)
-            ->whereDate('report_date', '>=', Carbon::now()->startOfMonth());
-
-        if ($companiesQuery && $companiesQuery !== 'all') {
-            $query->whereHas('shift.project.customer', function($subQ) use ($companiesQuery) {
-                $subQ->where('company_id', $companiesQuery);
-            });
-        }
-
-        return $query->count();
-    }
-
-    // === システム情報メソッド ===
-    
-    private function getSystemUptime(): string
-    {
-        // 実際のシステム稼働時間を計算
-        return "99.9%";
-    }
-
-    private function getSystemResponseTime(): int
-    {
-        // 実際のレスポンス時間を計算
-        return 15; // milliseconds
-    }
-
-    private function getActiveConnections(): int
-    {
-        // 実際のアクティブ接続数を計算
-        return 128;
-    }
-
-    private function getSystemErrorRate(): float
-    {
-        // 実際のエラー率を計算
-        return 0.01; // %
-    }
-
-    // === 他のプライベートメソッドは必要に応じて実装 ===
-    
-    private function createEmergencyAlert(User $user, array $data): string
-    {
-        // 緊急アラート作成ロジック
-        return 'ALERT_' . time() . '_' . $user->id;
-    }
-
-    // === 3社統合データ実装 ===
-    
-    private function getCompanyPerformance(int $companyId): array
-    {
-        $thisMonth = Carbon::now()->startOfMonth();
-        $lastMonth = Carbon::now()->subMonth()->startOfMonth();
+        $currentPeriodRevenue = $this->getRevenueByDateRange($companiesQuery, $dateRange[0], $dateRange[1]);
+        $previousPeriodRevenue = $this->getRevenueByDateRange($companiesQuery, 
+            $dateRange[0]->copy()->subDays($dateRange[1]->diffInDays($dateRange[0])), 
+            $dateRange[0]->copy()->subDay()
+        );
         
-        // 今月の売上
-        $currentRevenue = Invoice::where('status', 'paid')
-            ->whereHas('contract.project.customer', function($q) use ($companyId) {
-                $q->where('company_id', $companyId);
-            })
-            ->whereDate('created_at', '>=', $thisMonth)
-            ->sum('total_amount');
-            
-        // 先月の売上
-        $lastRevenue = Invoice::where('status', 'paid')
-            ->whereHas('contract.project.customer', function($q) use ($companyId) {
-                $q->where('company_id', $companyId);
-            })
-            ->whereBetween('created_at', [$lastMonth, $thisMonth])
-            ->sum('total_amount');
-            
-        $growthRate = $lastRevenue > 0 ? (($currentRevenue - $lastRevenue) / $lastRevenue) * 100 : 0;
+        $growthRate = $previousPeriodRevenue > 0 
+            ? (($currentPeriodRevenue - $previousPeriodRevenue) / $previousPeriodRevenue) * 100 
+            : 0;
         
         return [
-            'revenue' => $currentRevenue,
-            'growth_rate' => round($growthRate, 1),
-            'projects_count' => Project::whereHas('customer', function($q) use ($companyId) {
-                $q->where('company_id', $companyId);
-            })->where('status', 'active')->count(),
-            'guards_count' => Guard::where('company_id', $companyId)->where('status', 'active')->count(),
-            'attendance_rate' => $this->getCompanyAttendanceRate($companyId),
-            'incident_count' => $this->getCompanyIncidentCount($companyId)
+            'current_period' => [
+                'total_revenue' => $currentPeriodRevenue,
+                'average_daily' => $currentPeriodRevenue / max(1, $dateRange[1]->diffInDays($dateRange[0])),
+                'invoice_count' => $this->getInvoiceCountByDateRange($companiesQuery, $dateRange[0], $dateRange[1]),
+                'average_invoice_amount' => $this->getAverageInvoiceAmount($companiesQuery, $dateRange[0], $dateRange[1])
+            ],
+            'previous_period' => [
+                'total_revenue' => $previousPeriodRevenue,
+                'growth_rate' => round($growthRate, 2),
+                'growth_amount' => $currentPeriodRevenue - $previousPeriodRevenue
+            ],
+            'metrics' => [
+                'highest_daily_revenue' => $this->getHighestDailyRevenue($companiesQuery, $dateRange[0], $dateRange[1]),
+                'lowest_daily_revenue' => $this->getLowestDailyRevenue($companiesQuery, $dateRange[0], $dateRange[1]),
+                'revenue_volatility' => $this->getRevenueVolatility($companiesQuery, $dateRange[0], $dateRange[1]),
+                'payment_completion_rate' => $this->getPaymentCompletionRate($companiesQuery, $dateRange[0], $dateRange[1])
+            ]
         ];
     }
 
-    private function getCompanyRevenueShare(int $companyId): float
+    private function getDetailedRevenueTrendAnalysis(User $user, array $dateRange, string $companyFilter): array
     {
-        $totalRevenue = Invoice::where('status', 'paid')
-            ->whereMonth('created_at', Carbon::now()->month)
-            ->sum('total_amount');
-            
-        $companyRevenue = Invoice::where('status', 'paid')
-            ->whereHas('contract.project.customer', function($q) use ($companyId) {
-                $q->where('company_id', $companyId);
-            })
-            ->whereMonth('created_at', Carbon::now()->month)
-            ->sum('total_amount');
-            
-        return $totalRevenue > 0 ? round(($companyRevenue / $totalRevenue) * 100, 1) : 0.0;
-    }
-
-    private function getCompanyGuardCount(int $companyId): int
-    {
-        return Guard::where('company_id', $companyId)->where('status', 'active')->count();
-    }
-
-    private function getCompanyActiveProjects(int $companyId): int
-    {
-        return Project::whereHas('customer', function($q) use ($companyId) {
-            $q->where('company_id', $companyId);
-        })->where('status', 'active')->count();
-    }
-
-    private function getCompanyComplianceStatus(int $companyId): array
-    {
-        $guards = Guard::where('company_id', $companyId)->get();
-        $totalGuards = $guards->count();
+        $companiesQuery = $this->getCompanyFilterQuery($companyFilter, $user);
         
-        if ($totalGuards === 0) {
-            return ['score' => 100, 'status' => 'N/A', 'issues' => []];
-        }
-        
-        $issues = [];
-        $score = 100;
-        
-        // 資格有効期限チェック
-        $expiredLicenses = $guards->filter(function($guard) {
-            $licenses = is_array($guard->license_info) ? $guard->license_info : [];
-            foreach ($licenses as $license) {
-                if (isset($license['expiry_date']) && Carbon::parse($license['expiry_date'])->isPast()) {
-                    return true;
-                }
-            }
-            return false;
-        })->count();
-        
-        if ($expiredLicenses > 0) {
-            $issues[] = "資格期限切れ: {$expiredLicenses}名";
-            $score -= ($expiredLicenses / $totalGuards) * 20;
-        }
-        
-        // 健康診断チェック
-        $healthCheckExpired = $guards->filter(function($guard) {
-            return isset($guard->health_check_date) && 
-                   Carbon::parse($guard->health_check_date)->addYear()->isPast();
-        })->count();
-        
-        if ($healthCheckExpired > 0) {
-            $issues[] = "健康診断期限切れ: {$healthCheckExpired}名";
-            $score -= ($healthCheckExpired / $totalGuards) * 15;
-        }
-        
-        $status = $score >= 95 ? '優良' : ($score >= 80 ? '良好' : ($score >= 60 ? '注意' : '要改善'));
+        $dailyRevenue = $this->getDailyRevenueData($companiesQuery, $dateRange[0], $dateRange[1]);
+        $weeklyRevenue = $this->getWeeklyRevenueData($companiesQuery, $dateRange[0], $dateRange[1]);
+        $monthlyRevenue = $this->getMonthlyRevenueData($companiesQuery, $dateRange[0], $dateRange[1]);
         
         return [
-            'score' => round($score, 1),
-            'status' => $status,
-            'issues' => $issues
+            'daily_trend' => [
+                'data' => $dailyRevenue,
+                'moving_average_7' => $this->calculateMovingAverage($dailyRevenue, 7),
+                'moving_average_30' => $this->calculateMovingAverage($dailyRevenue, 30)
+            ],
+            'weekly_trend' => [
+                'data' => $weeklyRevenue,
+                'growth_rates' => $this->calculatePeriodGrowthRates($weeklyRevenue)
+            ],
+            'monthly_trend' => [
+                'data' => $monthlyRevenue,
+                'growth_rates' => $this->calculatePeriodGrowthRates($monthlyRevenue),
+                'seasonality_index' => $this->calculateSeasonalityIndex($monthlyRevenue)
+            ],
+            'trend_indicators' => [
+                'overall_trend' => $this->calculateTrendDirection($dailyRevenue),
+                'trend_strength' => $this->calculateTrendStrength($dailyRevenue),
+                'volatility_index' => $this->calculateVolatilityIndex($dailyRevenue)
+            ]
         ];
     }
 
-    private function getCompanyRecentAlerts(int $companyId): array
+    private function getRevenueCompositionAnalysis(User $user, array $dateRange, string $companyFilter): array
     {
-        return DailyReport::whereHas('shift.project.customer', function($q) use ($companyId) {
-            $q->where('company_id', $companyId);
-        })
-        ->where(function($q) {
-            $q->where('incident_flag', true)
-              ->orWhere('safety_issues', '!=', null)
-              ->orWhere('equipment_issues', '!=', null);
-        })
-        ->whereDate('report_date', '>=', Carbon::now()->subDays(7))
-        ->orderBy('report_date', 'desc')
-        ->limit(5)
-        ->get()
-        ->map(function($report) {
-            return [
-                'id' => $report->id,
-                'type' => $report->incident_flag ? 'incident' : 'warning',
-                'message' => $report->incident_details ?? $report->safety_issues ?? $report->equipment_issues,
-                'date' => $report->report_date->format('Y-m-d'),
-                'guard_name' => $report->shift->shiftGuardAssignments->first()->guard->name ?? 'N/A',
-                'location' => $report->shift->project->location ?? 'N/A'
-            ];
-        })
-        ->toArray();
-    }
-
-    private function getCompanyAttendanceRate(int $companyId): float
-    {
-        $totalShifts = Shift::whereHas('project.customer', function($q) use ($companyId) {
-            $q->where('company_id', $companyId);
-        })
-        ->whereMonth('start_time', Carbon::now()->month)
-        ->count();
+        $companiesQuery = $this->getCompanyFilterQuery($companyFilter, $user);
         
-        if ($totalShifts === 0) {
-            return 0.0;
-        }
+        return [
+            'by_service_type' => $this->getRevenueByServiceType($companiesQuery, $dateRange[0], $dateRange[1]),
+            'by_customer_segment' => $this->getRevenueByCustomerSegment($companiesQuery, $dateRange[0], $dateRange[1]),
+            'by_project_scale' => $this->getRevenueByProjectScale($companiesQuery, $dateRange[0], $dateRange[1]),
+            'by_contract_type' => $this->getRevenueByContractType($companiesQuery, $dateRange[0], $dateRange[1]),
+            'by_payment_terms' => $this->getRevenueByPaymentTerms($companiesQuery, $dateRange[0], $dateRange[1]),
+            'concentration_analysis' => [
+                'top_10_customers_share' => $this->getTop10CustomersRevenueShare($companiesQuery, $dateRange[0], $dateRange[1]),
+                'herfindahl_index' => $this->calculateRevenueHerfindahlIndex($companiesQuery, $dateRange[0], $dateRange[1]),
+                'diversification_score' => $this->calculateRevenueDiversificationScore($companiesQuery, $dateRange[0], $dateRange[1])
+            ]
+        ];
+    }
+
+    private function getCustomerRevenueAnalysis(User $user, array $dateRange, string $companyFilter): array
+    {
+        $companiesQuery = $this->getCompanyFilterQuery($companyFilter, $user);
         
-        $presentAttendances = Attendance::whereHas('shift.project.customer', function($q) use ($companyId) {
-            $q->where('company_id', $companyId);
-        })
-        ->where('status', 'present')
-        ->whereMonth('date', Carbon::now()->month)
-        ->count();
-        
-        return round(($presentAttendances / $totalShifts) * 100, 1);
-    }
-
-    private function getCompanyIncidentCount(int $companyId): int
-    {
-        return DailyReport::whereHas('shift.project.customer', function($q) use ($companyId) {
-            $q->where('company_id', $companyId);
-        })
-        ->where('incident_flag', true)
-        ->whereMonth('report_date', Carbon::now()->month)
-        ->count();
-    }
-    // === KPI計算メソッド実装 ===
-    
-    private function getRevenueGrowthRate($companiesQuery): float
-    {
-        $thisMonth = $this->getMonthlyRevenue($companiesQuery);
-        $lastMonth = $this->getLastMonthRevenue($companiesQuery);
-        
-        return $lastMonth > 0 ? round((($thisMonth - $lastMonth) / $lastMonth) * 100, 1) : 0.0;
-    }
-    
-    private function getLastMonthRevenue($companiesQuery): float
-    {
-        $query = Invoice::where('status', 'paid')
-            ->whereMonth('created_at', Carbon::now()->subMonth()->month)
-            ->whereYear('created_at', Carbon::now()->subMonth()->year);
-
-        if ($companiesQuery && $companiesQuery !== 'all') {
-            $query->whereHas('contract.project.customer', function($subQ) use ($companiesQuery) {
-                $subQ->where('company_id', $companiesQuery);
-            });
-        }
-
-        return (float) $query->sum('total_amount');
-    }
-
-    private function getRevenueForecast($companiesQuery): array
-    {
-        $monthlyData = [];
-        for ($i = 0; $i < 6; $i++) {
-            $month = Carbon::now()->subMonths($i);
-            $query = Invoice::where('status', 'paid')
-                ->whereMonth('created_at', $month->month)
-                ->whereYear('created_at', $month->year);
-
-            if ($companiesQuery && $companiesQuery !== 'all') {
+        $customerRevenueData = Invoice::where('status', 'paid')
+            ->whereBetween('created_at', [$dateRange[0], $dateRange[1]])
+            ->when($companiesQuery && $companiesQuery !== 'all', function($query) use ($companiesQuery) {
                 $query->whereHas('contract.project.customer', function($subQ) use ($companiesQuery) {
                     $subQ->where('company_id', $companiesQuery);
                 });
-            }
-
-            $monthlyData[] = $query->sum('total_amount');
-        }
-        
-        // 簡単な線形予測
-        $trend = count($monthlyData) > 1 ? ($monthlyData[0] - $monthlyData[1]) : 0;
-        $forecast = [];
-        for ($i = 1; $i <= 3; $i++) {
-            $forecast[] = max(0, $monthlyData[0] + ($trend * $i));
-        }
-        
-        return $forecast;
-    }
-
-    private function getGuardsUtilization($companiesQuery): float
-    {
-        $totalGuards = $this->getTotalGuards($companiesQuery);
-        
-        if ($totalGuards === 0) {
-            return 0.0;
-        }
-        
-        $query = DB::table('shift_guard_assignments')
-            ->join('shifts', 'shift_guard_assignments.shift_id', '=', 'shifts.id')
-            ->join('guards', 'shift_guard_assignments.guard_id', '=', 'guards.id')
-            ->whereMonth('shifts.start_time', Carbon::now()->month);
-
-        if ($companiesQuery && $companiesQuery !== 'all') {
-            $query->join('projects', 'shifts.project_id', '=', 'projects.id')
-                  ->join('customers', 'projects.customer_id', '=', 'customers.id')
-                  ->where('customers.company_id', $companiesQuery);
-        }
-
-        $assignedHours = $query->sum(DB::raw('TIMESTAMPDIFF(HOUR, shifts.start_time, shifts.end_time)'));
-        $totalPossibleHours = $totalGuards * 24 * Carbon::now()->daysInMonth;
-        
-        return $totalPossibleHours > 0 ? round(($assignedHours / $totalPossibleHours) * 100, 1) : 0.0;
-    }
-
-    private function getGuardsPerformanceAverage($companiesQuery): float
-    {
-        $query = Guard::query();
-
-        if ($companiesQuery && $companiesQuery !== 'all') {
-            $query->where('company_id', $companiesQuery);
-        }
-
-        $guards = $query->get();
-        
-        if ($guards->isEmpty()) {
-            return 0.0;
-        }
-        
-        $totalScore = 0;
-        $guardCount = 0;
-        
-        foreach ($guards as $guard) {
-            $score = $this->calculateGuardPerformanceScore($guard);
-            $totalScore += $score;
-            $guardCount++;
-        }
-        
-        return $guardCount > 0 ? round($totalScore / $guardCount, 1) : 0.0;
-    }
-
-    private function calculateGuardPerformanceScore($guard): float
-    {
-        $score = 80; // ベーススコア
-        
-        // 勤怠率による評価
-        $attendanceRate = Attendance::where('guard_id', $guard->id)
-            ->where('status', 'present')
-            ->whereMonth('date', Carbon::now()->month)
-            ->count();
-        $totalShifts = DB::table('shift_guard_assignments')
-            ->join('shifts', 'shift_guard_assignments.shift_id', '=', 'shifts.id')
-            ->where('shift_guard_assignments.guard_id', $guard->id)
-            ->whereMonth('shifts.start_time', Carbon::now()->month)
-            ->count();
-            
-        if ($totalShifts > 0) {
-            $attendancePercentage = ($attendanceRate / $totalShifts) * 100;
-            $score += ($attendancePercentage - 90) * 0.2; // 90%を基準に加減点
-        }
-        
-        // インシデント発生による減点
-        $incidents = DailyReport::whereHas('shift.shiftGuardAssignments', function($q) use ($guard) {
-            $q->where('guard_id', $guard->id);
-        })
-        ->where('incident_flag', true)
-        ->whereMonth('report_date', Carbon::now()->month)
-        ->count();
-        
-        $score -= $incidents * 5; // インシデント1件につき5点減点
-        
-        return max(0, min(100, $score));
-    }
-
-    private function getRevenuePerGuard($companiesQuery, $dateRange): float
-    {
-        $revenue = $this->getMonthlyRevenue($companiesQuery);
-        $guardCount = $this->getActiveGuards($companiesQuery);
-        
-        return $guardCount > 0 ? round($revenue / $guardCount, 0) : 0.0;
-    }
-
-    private function getProfitMargin($companiesQuery, $dateRange): float
-    {
-        $revenue = $this->getMonthlyRevenue($companiesQuery);
-        
-        // 簡易的なコスト計算（人件費中心）
-        $query = DB::table('shift_guard_assignments')
-            ->join('shifts', 'shift_guard_assignments.shift_id', '=', 'shifts.id')
-            ->join('guards', 'shift_guard_assignments.guard_id', '=', 'guards.id')
-            ->whereMonth('shifts.start_time', Carbon::now()->month);
-
-        if ($companiesQuery && $companiesQuery !== 'all') {
-            $query->join('projects', 'shifts.project_id', '=', 'projects.id')
-                  ->join('customers', 'projects.customer_id', '=', 'customers.id')
-                  ->where('customers.company_id', $companiesQuery);
-        }
-
-        $totalCost = $query->sum(DB::raw('
-            TIMESTAMPDIFF(HOUR, shifts.start_time, shifts.end_time) * 
-            COALESCE(shift_guard_assignments.hourly_rate, guards.hourly_rate, 1500)
-        '));
-        
-        return $revenue > 0 ? round((($revenue - $totalCost) / $revenue) * 100, 1) : 0.0;
-    }
-
-    private function getCostPerShift($companiesQuery, $dateRange): float
-    {
-        $totalShifts = $this->getTotalShifts($companiesQuery);
-        
-        if ($totalShifts === 0) {
-            return 0.0;
-        }
-        
-        $query = DB::table('shift_guard_assignments')
-            ->join('shifts', 'shift_guard_assignments.shift_id', '=', 'shifts.id')
-            ->join('guards', 'shift_guard_assignments.guard_id', '=', 'guards.id')
-            ->whereMonth('shifts.start_time', Carbon::now()->month);
-
-        if ($companiesQuery && $companiesQuery !== 'all') {
-            $query->join('projects', 'shifts.project_id', '=', 'projects.id')
-                  ->join('customers', 'projects.customer_id', '=', 'customers.id')
-                  ->where('customers.company_id', $companiesQuery);
-        }
-
-        $totalCost = $query->sum(DB::raw('
-            TIMESTAMPDIFF(HOUR, shifts.start_time, shifts.end_time) * 
-            COALESCE(shift_guard_assignments.hourly_rate, guards.hourly_rate, 1500)
-        '));
-        
-        return round($totalCost / $totalShifts, 0);
-    }
-    private function getBillingEfficiency($companiesQuery, $dateRange): float { return 98.2; }
-    private function getGuardProductivity($companiesQuery, $dateRange): float { return 89.7; }
-    private function getShiftFillRate($companiesQuery, $dateRange): float { return 96.5; }
-    private function getAverageResponseTime($companiesQuery, $dateRange): int { return 8; }
-    private function getCustomerSatisfaction($companiesQuery, $dateRange): float { return 4.6; }
-    private function getIncidentRate($companiesQuery, $dateRange): float { return 0.02; }
-    private function getComplianceScore($companiesQuery, $dateRange): float { return 98.1; }
-    private function getTrainingCompletionRate($companiesQuery, $dateRange): float { return 94.3; }
-    private function getEquipmentReliability($companiesQuery, $dateRange): float { return 99.1; }
-    private function getCustomerAcquisition($companiesQuery, $dateRange): int { return 3; }
-    private function getMarketShare($companiesQuery, $dateRange): float { return 15.2; }
-    private function getServiceExpansion($companiesQuery, $dateRange): int { return 2; }
-    private function getDigitalAdoption($companiesQuery, $dateRange): float { return 78.9; }
-    
-    // === 統合機能実装メソッド ===
-    
-    private function getTotalIntegrationMetrics(): array
-    {
-        return [
-            'total_revenue' => Invoice::where('status', 'paid')
-                ->whereMonth('created_at', Carbon::now()->month)
-                ->sum('total_amount'),
-            'total_guards' => Guard::where('status', 'active')->count(),
-            'total_projects' => Project::where('status', 'active')->count(),
-            'total_customers' => Customer::count(),
-            'cross_company_collaboration' => $this->getCrossCompanyCollaboration(),
-            'resource_sharing_efficiency' => $this->getResourceSharingEfficiency(),
-            'unified_compliance_score' => $this->getUnifiedComplianceScore()
-        ];
-    }
-
-    private function getCrossCompanyProjects(): array
-    {
-        return Project::whereHas('shifts.shiftGuardAssignments.guard', function($q) {
-            $q->select('company_id')
-              ->groupBy('company_id')
-              ->havingRaw('COUNT(DISTINCT company_id) > 1');
-        })
-        ->with(['customer', 'shifts.shiftGuardAssignments.guard'])
-        ->get()
-        ->map(function($project) {
-            $companies = $project->shifts->flatMap(function($shift) {
-                return $shift->shiftGuardAssignments->pluck('guard.company_id');
-            })->unique()->count();
-            
-            return [
-                'id' => $project->id,
-                'name' => $project->name,
-                'customer' => $project->customer->name,
-                'involved_companies' => $companies,
-                'start_date' => $project->start_date,
-                'status' => $project->status
-            ];
-        })
-        ->toArray();
-    }
-
-    private function getSharedResources(): array
-    {
-        return [
-            'shared_guards' => $this->getSharedGuards(),
-            'shared_equipment' => $this->getSharedEquipment(),
-            'shared_training' => $this->getSharedTraining(),
-            'resource_utilization' => $this->getResourceUtilization(Carbon::now()->startOfMonth(), Carbon::now()->endOfMonth(), 'all')
-        ];
-    }
-
-    private function getSharedGuards(): array
-    {
-        return Guard::whereHas('shiftAssignments.shift.project.customer', function($q) {
-            $q->select('company_id')
-              ->groupBy('company_id')
-              ->havingRaw('COUNT(DISTINCT company_id) > 1');
-        })
-        ->with(['shiftAssignments.shift.project.customer'])
-        ->get()
-        ->map(function($guard) {
-            $companies = $guard->shiftAssignments->map(function($assignment) {
-                return $assignment->shift->project->customer->company_id;
-            })->unique();
-            
-            return [
-                'id' => $guard->id,
-                'name' => $guard->name,
-                'primary_company' => $guard->company_id,
-                'shared_with' => $companies->reject(function($id) use ($guard) {
-                    return $id === $guard->company_id;
-                })->values()->toArray(),
-                'utilization_rate' => $this->calculateGuardUtilization($guard)
-            ];
-        })
-        ->toArray();
-    }
-
-    private function getConsolidatedReporting(): array
-    {
-        return [
-            'unified_dashboard' => true,
-            'cross_company_analytics' => true,
-            'consolidated_billing' => $this->getConsolidatedBilling(),
-            'unified_compliance_reports' => $this->getUnifiedComplianceReports(),
-            'integrated_performance_metrics' => $this->getIntegratedPerformanceMetrics()
-        ];
-    }
-
-    // === リアルタイム監視機能実装 ===
-    
-    private function getGuardLocations($companyFilter): array
-    {
-        $query = Guard::where('status', 'active');
-        
-        if ($companyFilter && $companyFilter !== 'all') {
-            $query->where('company_id', $companyFilter);
-        }
-        
-        return $query->with(['currentShift.project'])
+            })
+            ->with('contract.project.customer')
             ->get()
-            ->map(function($guard) {
-                $currentShift = $guard->shiftAssignments()
-                    ->whereHas('shift', function($q) {
-                        $q->where('start_time', '<=', Carbon::now())
-                          ->where('end_time', '>=', Carbon::now());
-                    })
-                    ->with('shift.project')
-                    ->first();
+            ->groupBy('contract.project.customer.id')
+            ->map(function($invoices, $customerId) {
+                $customer = $invoices->first()->contract->project->customer;
+                $totalRevenue = $invoices->sum('total_amount');
+                $invoiceCount = $invoices->count();
+                $avgInvoiceAmount = $invoiceCount > 0 ? $totalRevenue / $invoiceCount : 0;
                 
                 return [
-                    'id' => $guard->id,
-                    'name' => $guard->name,
-                    'location' => $currentShift ? $currentShift->shift->project->location : '待機中',
-                    'project_name' => $currentShift ? $currentShift->shift->project->name : null,
-                    'status' => $currentShift ? 'active' : 'standby',
-                    'last_update' => Carbon::now()->format('H:i'),
-                    'coordinates' => $this->getGuardCoordinates($guard),
-                    'emergency_contact' => $guard->emergency_contact
+                    'customer_id' => $customerId,
+                    'customer_name' => $customer->name,
+                    'customer_type' => $customer->type,
+                    'total_revenue' => $totalRevenue,
+                    'invoice_count' => $invoiceCount,
+                    'average_invoice_amount' => $avgInvoiceAmount,
+                    'first_invoice_date' => $invoices->min('created_at'),
+                    'last_invoice_date' => $invoices->max('created_at'),
+                    'revenue_trend' => $this->getCustomerRevenueTrend($customerId, $dateRange[0], $dateRange[1])
                 ];
             })
-            ->toArray();
+            ->sortByDesc('total_revenue')
+            ->values();
+        
+        return [
+            'top_customers' => $customerRevenueData->take(20),
+            'customer_segments' => $this->analyzeCustomerSegments($customerRevenueData),
+            'customer_lifecycle' => $this->analyzeCustomerLifecycle($customerRevenueData),
+            'churn_risk_analysis' => $this->analyzeCustomerChurnRisk($customerRevenueData)
+        ];
     }
 
-    private function getActiveShifts($companyFilter): array
+    // === 売上分析データ取得メソッド ===
+    
+    private function getInvoiceCountByDateRange($companiesQuery, Carbon $startDate, Carbon $endDate): int
     {
-        $query = Shift::where('start_time', '<=', Carbon::now())
-            ->where('end_time', '>=', Carbon::now());
-            
-        if ($companyFilter && $companyFilter !== 'all') {
-            $query->whereHas('project.customer', function($q) use ($companyFilter) {
-                $q->where('company_id', $companyFilter);
+        $query = Invoice::where('status', 'paid')
+            ->whereBetween('created_at', [$startDate, $endDate]);
+
+        if ($companiesQuery && $companiesQuery !== 'all') {
+            $query->whereHas('contract.project.customer', function($subQ) use ($companiesQuery) {
+                $subQ->where('company_id', $companiesQuery);
             });
         }
+
+        return $query->count();
+    }
+
+    private function getAverageInvoiceAmount($companiesQuery, Carbon $startDate, Carbon $endDate): float
+    {
+        $totalRevenue = $this->getRevenueByDateRange($companiesQuery, $startDate, $endDate);
+        $invoiceCount = $this->getInvoiceCountByDateRange($companiesQuery, $startDate, $endDate);
         
-        return $query->with(['project', 'shiftGuardAssignments.guard'])
+        return $invoiceCount > 0 ? round($totalRevenue / $invoiceCount, 0) : 0.0;
+    }
+
+    private function getDailyRevenueData($companiesQuery, Carbon $startDate, Carbon $endDate): array
+    {
+        $query = Invoice::where('status', 'paid')
+            ->whereBetween('created_at', [$startDate, $endDate])
+            ->selectRaw('DATE(created_at) as date, SUM(total_amount) as revenue');
+
+        if ($companiesQuery && $companiesQuery !== 'all') {
+            $query->whereHas('contract.project.customer', function($subQ) use ($companiesQuery) {
+                $subQ->where('company_id', $companiesQuery);
+            });
+        }
+
+        return $query->groupByRaw('DATE(created_at)')
+            ->orderBy('date')
             ->get()
-            ->map(function($shift) {
-                return [
-                    'id' => $shift->id,
-                    'project_name' => $shift->project->name,
-                    'location' => $shift->project->location,
-                    'start_time' => $shift->start_time->format('H:i'),
-                    'end_time' => $shift->end_time->format('H:i'),
-                    'guards' => $shift->shiftGuardAssignments->map(function($assignment) {
-                        return [
-                            'id' => $assignment->guard->id,
-                            'name' => $assignment->guard->name,
-                            'status' => $this->getGuardCurrentStatus($assignment->guard)
-                        ];
-                    }),
-                    'status' => $this->getShiftStatus($shift),
-                    'duration_remaining' => $shift->end_time->diffInMinutes(Carbon::now())
-                ];
-            })
+            ->pluck('revenue', 'date')
             ->toArray();
     }
 
-    // === ダミー実装メソッド（段階的に実装予定） ===
+    private function getWeeklyRevenueData($companiesQuery, Carbon $startDate, Carbon $endDate): array
+    {
+        $query = Invoice::where('status', 'paid')
+            ->whereBetween('created_at', [$startDate, $endDate])
+            ->selectRaw('YEARWEEK(created_at) as week, SUM(total_amount) as revenue');
+
+        if ($companiesQuery && $companiesQuery !== 'all') {
+            $query->whereHas('contract.project.customer', function($subQ) use ($companiesQuery) {
+                $subQ->where('company_id', $companiesQuery);
+            });
+        }
+
+        return $query->groupByRaw('YEARWEEK(created_at)')
+            ->orderBy('week')
+            ->get()
+            ->pluck('revenue', 'week')
+            ->toArray();
+    }
+
+    private function getMonthlyRevenueData($companiesQuery, Carbon $startDate, Carbon $endDate): array
+    {
+        $query = Invoice::where('status', 'paid')
+            ->whereBetween('created_at', [$startDate, $endDate])
+            ->selectRaw('DATE_FORMAT(created_at, "%Y-%m") as month, SUM(total_amount) as revenue');
+
+        if ($companiesQuery && $companiesQuery !== 'all') {
+            $query->whereHas('contract.project.customer', function($subQ) use ($companiesQuery) {
+                $subQ->where('company_id', $companiesQuery);
+            });
+        }
+
+        return $query->groupByRaw('DATE_FORMAT(created_at, "%Y-%m")')
+            ->orderBy('month')
+            ->get()
+            ->pluck('revenue', 'month')
+            ->toArray();
+    }
+
+    // === 売上分析計算メソッド ===
     
-    private function getCrossCompanyCollaboration(): float { return 85.5; }
-    private function getResourceSharingEfficiency(): float { return 78.2; }
-    private function getUnifiedComplianceScore(): float { return 94.8; }
-    private function getSharedEquipment(): array { return []; }
-    private function getSharedTraining(): array { return []; }
-    private function calculateGuardUtilization($guard): float { return 85.0; }
-    private function getConsolidatedBilling(): array { return []; }
-    private function getUnifiedComplianceReports(): array { return []; }
-    private function getIntegratedPerformanceMetrics(): array { return []; }
-    private function getGuardCoordinates($guard): array { return ['lat' => 35.6762, 'lng' => 139.6503]; }
-    private function getGuardCurrentStatus($guard): string { return 'normal'; }
-    private function getShiftStatus($shift): string { return 'active'; }
+    private function calculateMovingAverage(array $data, int $window): array
+    {
+        $movingAverage = [];
+        $values = array_values($data);
+        
+        for ($i = $window - 1; $i < count($values); $i++) {
+            $sum = array_sum(array_slice($values, $i - $window + 1, $window));
+            $movingAverage[array_keys($data)[$i]] = $sum / $window;
+        }
+        
+        return $movingAverage;
+    }
+
+    private function calculatePeriodGrowthRates(array $data): array
+    {
+        $growthRates = [];
+        $values = array_values($data);
+        $keys = array_keys($data);
+        
+        for ($i = 1; $i < count($values); $i++) {
+            $currentValue = $values[$i];
+            $previousValue = $values[$i - 1];
+            
+            $growthRate = $previousValue > 0 ? (($currentValue - $previousValue) / $previousValue) * 100 : 0;
+            $growthRates[$keys[$i]] = round($growthRate, 2);
+        }
+        
+        return $growthRates;
+    }
+
+    private function calculateSeasonalityIndex(array $monthlyData): array
+    {
+        if (count($monthlyData) < 12) {
+            return [];
+        }
+        
+        $average = array_sum($monthlyData) / count($monthlyData);
+        $seasonalityIndex = [];
+        
+        foreach ($monthlyData as $month => $revenue) {
+            $seasonalityIndex[$month] = $average > 0 ? round(($revenue / $average) * 100, 1) : 100;
+        }
+        
+        return $seasonalityIndex;
+    }
+
+    private function calculateTrendDirection(array $data): string
+    {
+        if (count($data) < 2) {
+            return 'insufficient_data';
+        }
+        
+        $values = array_values($data);
+        $firstHalf = array_slice($values, 0, floor(count($values) / 2));
+        $secondHalf = array_slice($values, floor(count($values) / 2));
+        
+        $firstHalfAvg = array_sum($firstHalf) / count($firstHalf);
+        $secondHalfAvg = array_sum($secondHalf) / count($secondHalf);
+        
+        if ($secondHalfAvg > $firstHalfAvg * 1.05) {
+            return 'upward';
+        } elseif ($secondHalfAvg < $firstHalfAvg * 0.95) {
+            return 'downward';
+        } else {
+            return 'stable';
+        }
+    }
+
+    private function calculateTrendStrength(array $data): float
+    {
+        if (count($data) < 2) {
+            return 0.0;
+        }
+        
+        $values = array_values($data);
+        $n = count($values);
+        $sumX = array_sum(range(1, $n));
+        $sumY = array_sum($values);
+        $sumXY = 0;
+        $sumXX = 0;
+        
+        for ($i = 0; $i < $n; $i++) {
+            $x = $i + 1;
+            $y = $values[$i];
+            $sumXY += $x * $y;
+            $sumXX += $x * $x;
+        }
+        
+        $denominator = sqrt(($n * $sumXX - $sumX * $sumX) * ($n * array_sum(array_map(function($y) { return $y * $y; }, $values)) - $sumY * $sumY));
+        
+        if ($denominator == 0) {
+            return 0.0;
+        }
+        
+        $correlation = ($n * $sumXY - $sumX * $sumY) / $denominator;
+        
+        return round(abs($correlation), 3);
+    }
+
+    private function calculateVolatilityIndex(array $data): float
+    {
+        if (count($data) < 2) {
+            return 0.0;
+        }
+        
+        $values = array_values($data);
+        $mean = array_sum($values) / count($values);
+        $variance = array_sum(array_map(function($x) use ($mean) { return pow($x - $mean, 2); }, $values)) / count($values);
+        $standardDeviation = sqrt($variance);
+        
+        return $mean > 0 ? round(($standardDeviation / $mean) * 100, 2) : 0.0;
+    }
+
+    // === 売上分析サポートメソッド（ダミー実装） ===
     
-    // === 高度分析・予測機能ダミー実装 ===
+    private function getHighestDailyRevenue($companiesQuery, Carbon $startDate, Carbon $endDate): array
+    {
+        return ['date' => '2025-05-15', 'revenue' => 2500000];
+    }
+
+    private function getLowestDailyRevenue($companiesQuery, Carbon $startDate, Carbon $endDate): array
+    {
+        return ['date' => '2025-05-03', 'revenue' => 850000];
+    }
+
+    private function getRevenueVolatility($companiesQuery, Carbon $startDate, Carbon $endDate): float
+    {
+        return 12.5;
+    }
+
+    private function getPaymentCompletionRate($companiesQuery, Carbon $startDate, Carbon $endDate): float
+    {
+        return 96.8;
+    }
+
+    private function getRevenueByServiceType($companiesQuery, Carbon $startDate, Carbon $endDate): array
+    {
+        return [
+            ['type' => '施設警備', 'revenue' => 15000000, 'percentage' => 45.5],
+            ['type' => 'イベント警備', 'revenue' => 8000000, 'percentage' => 24.2],
+            ['type' => '交通誘導', 'revenue' => 6000000, 'percentage' => 18.2],
+            ['type' => '身辺警護', 'revenue' => 4000000, 'percentage' => 12.1]
+        ];
+    }
+
+    private function getRevenueByCustomerSegment($companiesQuery, Carbon $startDate, Carbon $endDate): array
+    {
+        return [
+            ['segment' => '大企業', 'revenue' => 20000000, 'percentage' => 60.6],
+            ['segment' => '中小企業', 'revenue' => 8000000, 'percentage' => 24.2],
+            ['segment' => '官公庁', 'revenue' => 5000000, 'percentage' => 15.2]
+        ];
+    }
+
+    private function getRevenueByProjectScale($companiesQuery, Carbon $startDate, Carbon $endDate): array
+    {
+        return [
+            ['scale' => '大規模（月500万円以上）', 'revenue' => 18000000, 'percentage' => 54.5],
+            ['scale' => '中規模（月100-500万円）', 'revenue' => 10000000, 'percentage' => 30.3],
+            ['scale' => '小規模（月100万円未満）', 'revenue' => 5000000, 'percentage' => 15.2]
+        ];
+    }
+
+    private function getRevenueByContractType($companiesQuery, Carbon $startDate, Carbon $endDate): array
+    {
+        return [
+            ['type' => '年間契約', 'revenue' => 25000000, 'percentage' => 75.8],
+            ['type' => '短期契約', 'revenue' => 5000000, 'percentage' => 15.2],
+            ['type' => 'スポット契約', 'revenue' => 3000000, 'percentage' => 9.0]
+        ];
+    }
+
+    private function getRevenueByPaymentTerms($companiesQuery, Carbon $startDate, Carbon $endDate): array
+    {
+        return [
+            ['terms' => '月末締め翌月末払い', 'revenue' => 20000000, 'percentage' => 60.6],
+            ['terms' => '月末締め翌々月末払い', 'revenue' => 10000000, 'percentage' => 30.3],
+            ['terms' => '即時払い', 'revenue' => 3000000, 'percentage' => 9.1]
+        ];
+    }
+
+    private function getTop10CustomersRevenueShare($companiesQuery, Carbon $startDate, Carbon $endDate): float
+    {
+        return 68.5;
+    }
+
+    private function calculateRevenueHerfindahlIndex($companiesQuery, Carbon $startDate, Carbon $endDate): float
+    {
+        return 0.245;
+    }
+
+    private function calculateRevenueDiversificationScore($companiesQuery, Carbon $startDate, Carbon $endDate): float
+    {
+        return 78.9;
+    }
+
+    private function getCustomerRevenueTrend($customerId, Carbon $startDate, Carbon $endDate): array
+    {
+        return [
+            'trend' => 'increasing',
+            'growth_rate' => 12.5,
+            'volatility' => 8.2
+        ];
+    }
+
+    private function analyzeCustomerSegments($customerRevenueData): array
+    {
+        return [
+            'high_value' => ['count' => 5, 'revenue_share' => 65.2],
+            'medium_value' => ['count' => 15, 'revenue_share' => 28.8],
+            'low_value' => ['count' => 35, 'revenue_share' => 6.0]
+        ];
+    }
+
+    private function analyzeCustomerLifecycle($customerRevenueData): array
+    {
+        return [
+            'new_customers' => 3,
+            'growing_customers' => 8,
+            'stable_customers' => 25,
+            'declining_customers' => 5,
+            'at_risk_customers' => 2
+        ];
+    }
+
+    private function analyzeCustomerChurnRisk($customerRevenueData): array
+    {
+        return [
+            'high_risk' => ['count' => 2, 'potential_revenue_loss' => 2500000],
+            'medium_risk' => ['count' => 5, 'potential_revenue_loss' => 1800000],
+            'low_risk' => ['count' => 36, 'potential_revenue_loss' => 500000]
+        ];
+    }
+
+    private function getProjectRevenueAnalysis(User $user, array $dateRange, string $companyFilter): array
+    {
+        return [
+            'top_projects' => [
+                ['project_name' => '東京スカイツリー警備', 'revenue' => 12000000, 'profitability' => 25.5],
+                ['project_name' => '羽田空港セキュリティ', 'revenue' => 8500000, 'profitability' => 22.8],
+                ['project_name' => '新宿イベント警備', 'revenue' => 6200000, 'profitability' => 28.3]
+            ],
+            'project_types_analysis' => [
+                '施設警備' => ['count' => 15, 'revenue' => 18000000, 'avg_revenue' => 1200000],
+                'イベント警備' => ['count' => 8, 'revenue' => 8000000, 'avg_revenue' => 1000000]
+            ]
+        ];
+    }
+
+    private function getGuardRevenueAnalysis(User $user, array $dateRange, string $companyFilter): array
+    {
+        return [
+            'top_performers' => [
+                ['guard_name' => '佐藤一郎', 'attributed_revenue' => 2800000, 'hours' => 180, 'efficiency' => 15556],
+                ['guard_name' => '田中次郎', 'attributed_revenue' => 2450000, 'hours' => 165, 'efficiency' => 14848]
+            ],
+            'revenue_per_hour_analysis' => [
+                'average_revenue_per_hour' => 4500,
+                'top_performer_revenue_per_hour' => 6200
+            ]
+        ];
+    }
+
+    // === その他の売上分析ダミー実装 ===
     
-    private function getRevenueTrendAnalysis($dateRange, $companyFilter): array { return []; }
-    private function getRevenueSeasonality($dateRange, $companyFilter): array { return []; }
-    private function getRevenuePrediction($companyFilter): array { return []; }
-    private function getRevenueBreakdown($dateRange, $companyFilter): array { return []; }
-    private function getGuardPerformanceDistribution($companyFilter): array { return []; }
-    private function getGuardSkillAnalysis($companyFilter): array { return []; }
-    private function getGuardAvailabilityPatterns($companyFilter): array { return []; }
-    private function getTrainingEffectiveness($companyFilter): array { return []; }
-    private function getCustomerSatisfactionTrends($dateRange, $companyFilter): array { return []; }
-    private function getCustomerRetentionAnalysis($companyFilter): array { return []; }
-    private function getCustomerValueSegmentation($companyFilter): array { return []; }
-    private function getCustomerChurnPrediction($companyFilter): array { return []; }
-    private function getResourceUtilization($dateRange, $companyFilter): array { return []; }
-    private function getCostOptimization($dateRange, $companyFilter): array { return []; }
-    private function getScheduleEfficiency($dateRange, $companyFilter): array { return []; }
-    private function getQualityMetrics($dateRange, $companyFilter): array { return []; }
+    private function getRevenueForecastAnalysis(User $user, string $companyFilter): array
+    {
+        return [
+            'next_month' => ['forecast' => 12500000, 'confidence' => 85.2],
+            'next_quarter' => ['forecast' => 38000000, 'confidence' => 78.9],
+            'next_year' => ['forecast' => 145000000, 'confidence' => 65.5]
+        ];
+    }
+
+    private function getProfitabilityAnalysis(User $user, array $dateRange, string $companyFilter): array
+    {
+        return [
+            'gross_profit_margin' => 32.5,
+            'operating_profit_margin' => 18.2,
+            'net_profit_margin' => 12.8
+        ];
+    }
+
+    private function getSeasonalityAnalysis(User $user, string $companyFilter): array
+    {
+        return [
+            'seasonal_pattern' => 'Strong winter peak',
+            'peak_months' => ['December', 'January', 'February'],
+            'low_months' => ['June', 'July', 'August']
+        ];
+    }
+
+    private function getRevenuePerformanceAnalysis(User $user, array $dateRange, string $companyFilter): array
+    {
+        return [
+            'vs_target' => 108.5,
+            'vs_last_year' => 112.3,
+            'vs_industry_average' => 95.8,
+            'performance_score' => 'Above Average'
+        ];
+    }
+
+    private function getRevenueExportData(User $user, array $dateRange, string $companyFilter, string $analysisType): array
+    {
+        return [
+            'export_formats' => ['CSV', 'Excel', 'PDF'],
+            'data_points' => 1250,
+            'last_updated' => Carbon::now()->format('Y-m-d H:i:s')
+        ];
+    }
     
-    // === セキュリティ・監視機能ダミー実装 ===
+    /**
+     * 売上分析データのエクスポート機能
+     * 
+     * @param Request $request
+     * @return \Illuminate\Http\Response
+     */
+    public function exportRevenueAnalysis(Request $request)
+    {
+        $user = Auth::user();
+        
+        $validatedData = $request->validate([
+            'format' => 'required|in:excel,csv,pdf',
+            'period' => 'string',
+            'company' => 'string',
+            'analysis_type' => 'string',
+            'data' => 'array'
+        ]);
+        
+        $period = $validatedData['period'] ?? 'year';
+        $companyFilter = $validatedData['company'] ?? 'all';
+        $analysisType = $validatedData['analysis_type'] ?? 'overview';
+        $format = $validatedData['format'];
+        $selectedData = $validatedData['data'] ?? ['summary'];
+        
+        // 分析データを取得
+        $revenueAnalysisData = $this->getRevenueAnalysisData($user, $period, $companyFilter, $analysisType);
+        
+        // エクスポートデータを準備
+        $exportData = $this->prepareExportData($revenueAnalysisData, $selectedData);
+        
+        // フォーマットに応じてエクスポート実行
+        switch ($format) {
+            case 'excel':
+                return $this->exportToExcel($exportData, $period, $companyFilter);
+            case 'csv':
+                return $this->exportToCsv($exportData, $period, $companyFilter);
+            case 'pdf':
+                return $this->exportToPdf($exportData, $period, $companyFilter);
+            default:
+                return $this->errorResponse('サポートされていないフォーマットです', 400);
+        }
+    }
+
+    /**
+     * エクスポート用データの準備
+     */
+    private function prepareExportData(array $analysisData, array $selectedData): array
+    {
+        $exportData = [];
+        
+        // 概要データ
+        if (in_array('summary', $selectedData)) {
+            $exportData['overview'] = [
+                'title' => '売上分析概要',
+                'data' => [
+                    ['項目', '値'],
+                    ['今期売上合計', '¥' . number_format($analysisData['overview']['current_period']['total_revenue'] ?? 0)],
+                    ['平均日次売上', '¥' . number_format($analysisData['overview']['current_period']['average_daily'] ?? 0)],
+                    ['請求件数', number_format($analysisData['overview']['current_period']['invoice_count'] ?? 0) . '件'],
+                    ['平均請求額', '¥' . number_format($analysisData['overview']['current_period']['average_invoice_amount'] ?? 0)],
+                    ['前期比成長率', ($analysisData['overview']['previous_period']['growth_rate'] ?? 0) . '%'],
+                    ['売上変動率', ($analysisData['overview']['metrics']['revenue_volatility'] ?? 0) . '%'],
+                    ['支払完了率', ($analysisData['overview']['metrics']['payment_completion_rate'] ?? 0) . '%']
+                ]
+            ];
+        }
+        
+        // トレンドデータ
+        if (in_array('trend', $selectedData)) {
+            $exportData['trend'] = [
+                'title' => '売上トレンド分析',
+                'daily_data' => $this->formatTrendDataForExport($analysisData['trend_analysis']['daily_trend']['data'] ?? []),
+                'indicators' => [
+                    ['指標', '値'],
+                    ['全体トレンド', $analysisData['trend_analysis']['trend_indicators']['overall_trend'] ?? 'N/A'],
+                    ['トレンド強度', ($analysisData['trend_analysis']['trend_indicators']['trend_strength'] ?? 0)],
+                    ['変動指数', ($analysisData['trend_analysis']['trend_indicators']['volatility_index'] ?? 0) . '%']
+                ]
+            ];
+        }
+        
+        // 詳細データ
+        if (in_array('detail', $selectedData)) {
+            $exportData['details'] = [
+                'title' => '詳細分析データ',
+                'customer_analysis' => $this->formatCustomerDataForExport($analysisData['customer_analysis'] ?? []),
+                'composition_analysis' => $this->formatCompositionDataForExport($analysisData['composition_analysis'] ?? []),
+                'forecast_analysis' => $this->formatForecastDataForExport($analysisData['forecast_analysis'] ?? [])
+            ];
+        }
+        
+        return $exportData;
+    }
+
+    /**
+     * Excelファイルとしてエクスポート
+     */
+    private function exportToExcel(array $exportData, string $period, string $companyFilter)
+    {
+        $filename = "売上分析_{$period}_{$companyFilter}_" . date('Y-m-d_H-i-s') . ".xlsx";
+        
+        // 簡易Excel出力（実際にはSpout等のライブラリを使用推奨）
+        $csvContent = $this->convertToCSV($exportData);
+        
+        return response($csvContent)
+            ->header('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+            ->header('Content-Disposition', 'attachment; filename="' . $filename . '"')
+            ->header('Cache-Control', 'max-age=0');
+    }
+
+    /**
+     * CSVファイルとしてエクスポート
+     */
+    private function exportToCsv(array $exportData, string $period, string $companyFilter)
+    {
+        $filename = "売上分析_{$period}_{$companyFilter}_" . date('Y-m-d_H-i-s') . ".csv";
+        $csvContent = $this->convertToCSV($exportData);
+        
+        return response($csvContent)
+            ->header('Content-Type', 'text/csv; charset=UTF-8')
+            ->header('Content-Disposition', 'attachment; filename="' . $filename . '"')
+            ->header('Cache-Control', 'max-age=0');
+    }
+
+    /**
+     * PDFファイルとしてエクスポート
+     */
+    private function exportToPdf(array $exportData, string $period, string $companyFilter)
+    {
+        $filename = "売上分析_{$period}_{$companyFilter}_" . date('Y-m-d_H-i-s') . ".pdf";
+        
+        // PDF生成（実際にはDompdf等のライブラリを使用推奨）
+        $htmlContent = $this->convertToHTML($exportData);
+        
+        // 簡易HTML形式でのレスポンス（実際のPDF生成は実装時に調整）
+        return response($htmlContent)
+            ->header('Content-Type', 'text/html; charset=UTF-8')
+            ->header('Content-Disposition', 'attachment; filename="' . $filename . '"');
+    }
+
+    /**
+     * データをCSV形式に変換
+     */
+    private function convertToCSV(array $exportData): string
+    {
+        $output = fopen('php://temp', 'r+');
+        
+        // BOM付きUTF-8
+        fputs($output, "\xEF\xBB\xBF");
+        
+        foreach ($exportData as $section => $sectionData) {
+            // セクションタイトル
+            fputcsv($output, [$sectionData['title']]);
+            fputcsv($output, []); // 空行
+            
+            // データ行
+            if (isset($sectionData['data'])) {
+                foreach ($sectionData['data'] as $row) {
+                    fputcsv($output, $row);
+                }
+            }
+            
+            // トレンドデータの場合
+            if (isset($sectionData['daily_data'])) {
+                fputcsv($output, ['日付', '売上']);
+                foreach ($sectionData['daily_data'] as $date => $revenue) {
+                    fputcsv($output, [$date, $revenue]);
+                }
+            }
+            
+            // 指標データの場合
+            if (isset($sectionData['indicators'])) {
+                fputcsv($output, []); // 空行
+                foreach ($sectionData['indicators'] as $row) {
+                    fputcsv($output, $row);
+                }
+            }
+            
+            fputcsv($output, []); // セクション間の空行
+            fputcsv($output, []); // セクション間の空行
+        }
+        
+        rewind($output);
+        $csvContent = stream_get_contents($output);
+        fclose($output);
+        
+        return $csvContent;
+    }
+
+    /**
+     * データをHTML形式に変換（PDF用）
+     */
+    private function convertToHTML(array $exportData): string
+    {
+        $html = '<!DOCTYPE html>
+        <html lang="ja">
+        <head>
+            <meta charset="UTF-8">
+            <title>売上分析レポート</title>
+            <style>
+                body { font-family: "Yu Gothic", "Hiragino Sans", sans-serif; font-size: 12px; }
+                .header { text-align: center; margin-bottom: 30px; }
+                .section { margin-bottom: 30px; }
+                .section-title { font-size: 16px; font-weight: bold; border-bottom: 2px solid #333; padding-bottom: 5px; margin-bottom: 15px; }
+                table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
+                th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+                th { background-color: #f5f5f5; font-weight: bold; }
+                .number { text-align: right; }
+                .report-meta { font-size: 10px; color: #666; margin-top: 30px; }
+            </style>
+        </head>
+        <body>
+            <div class="header">
+                <h1>売上分析レポート</h1>
+                <p>生成日時: ' . date('Y年m月d日 H:i:s') . '</p>
+            </div>';
+        
+        foreach ($exportData as $section => $sectionData) {
+            $html .= '<div class="section">';
+            $html .= '<h2 class="section-title">' . $sectionData['title'] . '</h2>';
+            
+            if (isset($sectionData['data'])) {
+                $html .= '<table>';
+                foreach ($sectionData['data'] as $index => $row) {
+                    if ($index === 0) {
+                        $html .= '<thead><tr>';
+                        foreach ($row as $cell) {
+                            $html .= '<th>' . htmlspecialchars($cell) . '</th>';
+                        }
+                        $html .= '</tr></thead><tbody>';
+                    } else {
+                        $html .= '<tr>';
+                        foreach ($row as $cell) {
+                            $class = is_numeric(str_replace(['¥', ',', '%'], '', $cell)) ? ' class="number"' : '';
+                            $html .= '<td' . $class . '>' . htmlspecialchars($cell) . '</td>';
+                        }
+                        $html .= '</tr>';
+                    }
+                }
+                $html .= '</tbody></table>';
+            }
+            
+            $html .= '</div>';
+        }
+        
+        $html .= '<div class="report-meta">
+                <p>このレポートは警備グループ会社受注管理・シフト管理統合システムにより自動生成されました。</p>
+            </div>
+        </body>
+        </html>';
+        
+        return $html;
+    }
+
+    // === エクスポート用データフォーマット関数 ===
     
-    private function getCurrentThreatLevel(): string { return 'low'; }
-    private function getFirewallStatus(): string { return 'active'; }
-    private function getIntrusionDetectionStatus(): string { return 'normal'; }
-    private function getLatestSecurityScan(): array { return ['status' => 'clean', 'last_scan' => Carbon::now()->subHours(6)]; }
-    private function getActiveIncidents($companyFilter): array { return []; }
-    private function getEmergencyResponseStatus(): string { return 'ready'; }
-    private function getEvacuationProcedures(): array { return []; }
-    private function getEmergencyContacts(): array { return []; }
-    
-    // === その他必要なダミー実装 ===
-    
-    private function getChartData($user, $chartType, $period, $companyFilter): array { return []; }
-    private function getRealTimeData($user, $dataType, $companyFilter): array { return []; }
-    private function getUserPermissions($user): array { return []; }
-    private function getSessionExpiration(): string { return Carbon::now()->addHours(2)->format('Y-m-d H:i:s'); }
-    private function getUserPreferences($user): array { return []; }
-    
-    // 他の多数のメソッドも必要に応じてダミー実装...
+    private function formatTrendDataForExport(array $trendData): array
+    {
+        $formattedData = [];
+        foreach ($trendData as $date => $revenue) {
+            $formattedData[$date] = number_format($revenue);
+        }
+        return $formattedData;
+    }
+
+    private function formatCustomerDataForExport(array $customerData): array
+    {
+        if (!isset($customerData['top_customers'])) {
+            return [];
+        }
+        
+        $formatted = [['顧客名', '売上金額', '請求件数', '平均請求額', '成長率']];
+        
+        foreach ($customerData['top_customers'] as $customer) {
+            $formatted[] = [
+                $customer['customer_name'] ?? 'N/A',
+                '¥' . number_format($customer['total_revenue'] ?? 0),
+                number_format($customer['invoice_count'] ?? 0),
+                '¥' . number_format($customer['average_invoice_amount'] ?? 0),
+                ($customer['revenue_trend']['growth_rate'] ?? 0) . '%'
+            ];
+        }
+        
+        return $formatted;
+    }
+
+    private function formatCompositionDataForExport(array $compositionData): array
+    {
+        if (!isset($compositionData['by_service_type'])) {
+            return [];
+        }
+        
+        $formatted = [['サービス種別', '売上金額', '構成比']];
+        
+        foreach ($compositionData['by_service_type'] as $service) {
+            $formatted[] = [
+                $service['type'] ?? 'N/A',
+                '¥' . number_format($service['revenue'] ?? 0),
+                ($service['percentage'] ?? 0) . '%'
+            ];
+        }
+        
+        return $formatted;
+    }
+
+    private function formatForecastDataForExport(array $forecastData): array
+    {
+        return [
+            ['期間', '予測売上', '信頼度'],
+            ['来月', '¥' . number_format($forecastData['next_month']['forecast'] ?? 0), ($forecastData['next_month']['confidence'] ?? 0) . '%'],
+            ['来四半期', '¥' . number_format($forecastData['next_quarter']['forecast'] ?? 0), ($forecastData['next_quarter']['confidence'] ?? 0) . '%'],
+            ['来年', '¥' . number_format($forecastData['next_year']['forecast'] ?? 0), ($forecastData['next_year']['confidence'] ?? 0) . '%']
+        ];
+    }
+}

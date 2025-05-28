@@ -509,4 +509,589 @@ class ProjectController extends Controller
 
         return back()->with('success', '警備員をアサインしました');
     }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Google Maps API連携機能
+    |--------------------------------------------------------------------------
+    */
+
+    /**
+     * プロジェクト（現場）位置管理地図を表示
+     * 
+     * @param Request $request
+     * @return \Illuminate\View\View|\Illuminate\Http\JsonResponse
+     */
+    public function mapView(Request $request)
+    {
+        $user = Auth::user();
+        
+        $projects = Project::with(['customer', 'guards.user'])
+            ->where('status', 'active')
+            ->whereNotNull('location_lat')
+            ->whereNotNull('location_lng')
+            ->when($user->role !== 'admin', function($q) use ($user) {
+                return $q->where('customer_id', $user->company_id);
+            })
+            ->get();
+
+        // 現場マップ情報を準備
+        $projectsMapData = [];
+        foreach ($projects as $project) {
+            $projectsMapData[] = [
+                'id' => $project->id,
+                'name' => $project->name,
+                'customer' => $project->customer->name ?? '',
+                'latitude' => $project->location_lat,
+                'longitude' => $project->location_lng,
+                'address' => $project->full_address,
+                'status' => $project->status,
+                'priority' => $project->priority,
+                'start_date' => $project->start_date?->format('Y-m-d'),
+                'end_date' => $project->end_date?->format('Y-m-d'),
+                'assigned_guards_count' => $project->guards->count(),
+                'required_guards' => $project->required_guards ?? 0,
+                'marker_color' => $project->marker_color,
+            ];
+        }
+
+        if ($request->expectsJson()) {
+            return $this->successResponse([
+                'projects' => $projectsMapData,
+                'center' => [
+                    'lat' => config('services.google_maps.default_lat'),
+                    'lng' => config('services.google_maps.default_lng'),
+                ],
+                'zoom' => config('services.google_maps.default_zoom'),
+            ], 'プロジェクト位置情報を取得しました');
+        }
+
+        return view('projects.map', compact('projectsMapData'));
+    }
+
+    /**
+     * プロジェクトの位置情報を更新
+     * 
+     * @param Request $request
+     * @param int $id
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function updateLocation(Request $request, $id)
+    {
+        $validator = Validator::make($request->all(), [
+            'latitude' => 'required|numeric|between:-90,90',
+            'longitude' => 'required|numeric|between:-180,180',
+            'address' => 'nullable|string|max:500',
+            'building' => 'nullable|string|max:100',
+            'floor' => 'nullable|string|max:20',
+            'room' => 'nullable|string|max:50',
+            'radius' => 'nullable|numeric|min:10|max:1000',
+            'parking_info' => 'nullable|array',
+            'access_info' => 'nullable|array',
+        ]);
+
+        if ($validator->fails()) {
+            return $this->errorResponse('位置情報が無効です', 422, $validator->errors());
+        }
+
+        $user = Auth::user();
+        
+        $project = Project::when($user->role !== 'admin', function($q) use ($user) {
+                return $q->where('customer_id', $user->company_id);
+            })
+            ->findOrFail($id);
+
+        $project->update([
+            'location_lat' => $request->latitude,
+            'location_lng' => $request->longitude,
+            'location_address' => $request->address,
+            'location_building' => $request->building,
+            'location_floor' => $request->floor,
+            'location_room' => $request->room,
+            'location_radius' => $request->radius ?? 100,
+            'parking_info' => $request->parking_info ?? [],
+            'access_info' => $request->access_info ?? [],
+        ]);
+
+        return $this->successResponse([
+            'project_id' => $project->id,
+            'location' => [
+                'latitude' => $project->location_lat,
+                'longitude' => $project->location_lng,
+                'address' => $project->location_address,
+                'building' => $project->location_building,
+                'floor' => $project->location_floor,
+                'room' => $project->location_room,
+                'radius' => $project->location_radius,
+                'full_address' => $project->full_address,
+            ]
+        ], 'プロジェクト位置情報を更新しました');
+    }
+
+    /**
+     * プロジェクト近隣の警備員を検索
+     * 
+     * @param Request $request
+     * @param int $id
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function findNearbyGuards(Request $request, $id)
+    {
+        $user = Auth::user();
+        
+        $project = Project::when($user->role !== 'admin', function($q) use ($user) {
+                return $q->where('customer_id', $user->company_id);
+            })
+            ->findOrFail($id);
+
+        if (!$project->hasLocation()) {
+            return $this->errorResponse('プロジェクトの位置情報が設定されていません', 400);
+        }
+
+        $radius = $request->get('radius', 10); // デフォルト10km圏内
+        $availableOnly = $request->get('available_only', true);
+
+        // 近隣警備員を検索
+        $nearbyGuards = $project->getNearbyGuards($radius, $availableOnly);
+
+        $guards = $nearbyGuards->map(function($guard) {
+            return [
+                'id' => $guard->id,
+                'name' => $guard->user->name ?? '',
+                'employee_id' => $guard->employee_id,
+                'status' => $guard->status,
+                'location' => [
+                    'latitude' => $guard->location_lat,
+                    'longitude' => $guard->location_lng,
+                    'address' => $guard->location_address,
+                ],
+                'distance' => $guard->distance_to_project,
+                'skills' => $guard->skills ?? [],
+                'qualifications' => $guard->qualifications ?? [],
+                'hourly_wage' => $guard->hourly_wage,
+                'availability' => $guard->available_times ?? [],
+            ];
+        });
+
+        return $this->successResponse([
+            'project' => [
+                'id' => $project->id,
+                'name' => $project->name,
+                'location' => [
+                    'latitude' => $project->location_lat,
+                    'longitude' => $project->location_lng,
+                    'address' => $project->full_address,
+                ],
+            ],
+            'nearby_guards' => $guards,
+            'search_radius' => $radius,
+            'total_found' => $guards->count(),
+        ], '近隣警備員情報を取得しました');
+    }
+
+    /**
+     * プロジェクトの最適警備員配置を計算
+     * 
+     * @param Request $request
+     * @param int $id
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function calculateOptimalPlacement(Request $request, $id)
+    {
+        $validator = Validator::make($request->all(), [
+            'guard_count' => 'nullable|integer|min:1|max:20',
+            'shift_pattern' => 'nullable|in:continuous,rotation,split',
+            'coverage_priority' => 'nullable|in:entrance,perimeter,patrol,mixed',
+        ]);
+
+        if ($validator->fails()) {
+            return $this->errorResponse('配置計算データが無効です', 422, $validator->errors());
+        }
+
+        $user = Auth::user();
+        
+        $project = Project::when($user->role !== 'admin', function($q) use ($user) {
+                return $q->where('customer_id', $user->company_id);
+            })
+            ->findOrFail($id);
+
+        if (!$project->hasLocation()) {
+            return $this->errorResponse('プロジェクトの位置情報が設定されていません', 400);
+        }
+
+        $guardCount = $request->get('guard_count', $project->required_guards ?? 2);
+        $shiftPattern = $request->get('shift_pattern', 'continuous');
+        $coveragePriority = $request->get('coverage_priority', 'mixed');
+
+        // 最適配置を計算
+        $optimalPlacements = $project->getOptimalGuardPlacement($guardCount);
+
+        // シフトパターンに応じた配置調整
+        $adjustedPlacements = $this->adjustPlacementForShiftPattern(
+            $optimalPlacements, 
+            $shiftPattern, 
+            $coveragePriority
+        );
+
+        return $this->successResponse([
+            'project' => [
+                'id' => $project->id,
+                'name' => $project->name,
+                'location' => $project->map_info,
+            ],
+            'optimal_placements' => $adjustedPlacements,
+            'configuration' => [
+                'guard_count' => $guardCount,
+                'shift_pattern' => $shiftPattern,
+                'coverage_priority' => $coveragePriority,
+            ],
+            'recommendations' => $this->generatePlacementRecommendations($project, $adjustedPlacements),
+        ], '最適警備員配置を計算しました');
+    }
+
+    /**
+     * プロジェクト間のルート最適化
+     * 
+     * @param Request $request
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function optimizeMultiProjectRoute(Request $request)
+    {
+        $validator = Validator::make($request->all(), [
+            'project_ids' => 'required|array|min:2',
+            'project_ids.*' => 'exists:projects,id',
+            'start_location' => 'nullable|array',
+            'start_location.lat' => 'required_with:start_location|numeric|between:-90,90',
+            'start_location.lng' => 'required_with:start_location|numeric|between:-180,180',
+            'optimization_type' => 'nullable|in:shortest_distance,shortest_time,balanced',
+        ]);
+
+        if ($validator->fails()) {
+            return $this->errorResponse('ルート最適化データが無効です', 422, $validator->errors());
+        }
+
+        $user = Auth::user();
+        
+        $projects = Project::whereIn('id', $request->project_ids)
+            ->whereNotNull('location_lat')
+            ->whereNotNull('location_lng')
+            ->when($user->role !== 'admin', function($q) use ($user) {
+                return $q->where('customer_id', $user->company_id);
+            })
+            ->get();
+
+        if ($projects->count() < 2) {
+            return $this->errorResponse('ルート最適化には2つ以上のプロジェクトが必要です', 400);
+        }
+
+        $startLocation = $request->start_location ?? [
+            'lat' => config('services.google_maps.default_lat'),
+            'lng' => config('services.google_maps.default_lng'),
+        ];
+
+        $optimizationType = $request->get('optimization_type', 'balanced');
+
+        // ルート最適化を実行
+        $optimizedRoute = $this->performMultiProjectRouteOptimization(
+            $projects, 
+            $startLocation, 
+            $optimizationType
+        );
+
+        return $this->successResponse([
+            'start_location' => $startLocation,
+            'projects' => $projects->map(function($project) {
+                return $project->map_info;
+            }),
+            'optimized_route' => $optimizedRoute,
+            'optimization_type' => $optimizationType,
+            'total_projects' => $projects->count(),
+        ], 'マルチプロジェクトルート最適化を完了しました');
+    }
+
+    /**
+     * 現場エリア内の警備員監視
+     * 
+     * @param Request $request
+     * @param int $id
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function monitorGuardsInArea(Request $request, $id)
+    {
+        $user = Auth::user();
+        
+        $project = Project::when($user->role !== 'admin', function($q) use ($user) {
+                return $q->where('customer_id', $user->company_id);
+            })
+            ->findOrFail($id);
+
+        if (!$project->hasLocation()) {
+            return $this->errorResponse('プロジェクトの位置情報が設定されていません', 400);
+        }
+
+        // 現場エリア内の警備員を検索
+        $guardsInArea = Guard::where('status', 'active')
+            ->whereNotNull('location_lat')
+            ->whereNotNull('location_lng')
+            ->where('location_sharing_enabled', true)
+            ->get()
+            ->filter(function($guard) use ($project) {
+                return $project->isGuardInRange($guard);
+            });
+
+        $monitoring = $guardsInArea->map(function($guard) use ($project) {
+            $distance = $project->getDistanceFromGuard($guard);
+            $isInRange = $project->isGuardInRange($guard);
+            
+            return [
+                'guard' => [
+                    'id' => $guard->id,
+                    'name' => $guard->user->name ?? '',
+                    'employee_id' => $guard->employee_id,
+                    'status' => $guard->status,
+                ],
+                'location' => [
+                    'latitude' => $guard->location_lat,
+                    'longitude' => $guard->location_lng,
+                    'address' => $guard->location_address,
+                    'updated_at' => $guard->location_updated_at?->format('Y-m-d H:i:s'),
+                ],
+                'distance_from_site' => $distance,
+                'is_in_authorized_area' => $isInRange,
+                'area_status' => $isInRange ? 'authorized' : 'outside_area',
+                'current_shift' => $guard->getCurrentShift()?->only(['id', 'start_time', 'end_time', 'status']),
+            ];
+        });
+
+        return $this->successResponse([
+            'project' => [
+                'id' => $project->id,
+                'name' => $project->name,
+                'location' => $project->map_info,
+                'authorized_radius' => $project->location_radius,
+            ],
+            'guards_monitoring' => $monitoring,
+            'summary' => [
+                'total_guards_in_area' => $monitoring->count(),
+                'authorized_guards' => $monitoring->where('is_in_authorized_area', true)->count(),
+                'outside_area_guards' => $monitoring->where('is_in_authorized_area', false)->count(),
+            ],
+            'monitored_at' => now()->format('Y-m-d H:i:s'),
+        ], '現場エリア内警備員監視データを取得しました');
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Google Maps Helper Methods
+    |--------------------------------------------------------------------------
+    */
+
+    /**
+     * シフトパターンに応じた配置調整
+     * 
+     * @param array $placements
+     * @param string $shiftPattern
+     * @param string $coveragePriority
+     * @return array
+     */
+    private function adjustPlacementForShiftPattern(array $placements, string $shiftPattern, string $coveragePriority): array
+    {
+        // シフトパターンと監視優先度に応じて配置を調整
+        foreach ($placements as &$placement) {
+            switch ($coveragePriority) {
+                case 'entrance':
+                    $placement['priority'] = 'entrance_monitoring';
+                    $placement['patrol_area']['radius'] *= 0.7; // エリアを縮小
+                    break;
+                case 'perimeter':
+                    $placement['priority'] = 'perimeter_patrol';
+                    $placement['patrol_area']['radius'] *= 1.2; // エリアを拡大
+                    break;
+                case 'patrol':
+                    $placement['priority'] = 'mobile_patrol';
+                    $placement['patrol_route'] = $this->generatePatrolRoute($placement);
+                    break;
+                default:
+                    $placement['priority'] = 'mixed_coverage';
+                    break;
+            }
+            
+            $placement['shift_pattern'] = $shiftPattern;
+            $placement['coverage_type'] = $coveragePriority;
+        }
+
+        return $placements;
+    }
+
+    /**
+     * 巡回ルートを生成
+     * 
+     * @param array $placement
+     * @return array
+     */
+    private function generatePatrolRoute(array $placement): array
+    {
+        $centerLat = $placement['lat'];
+        $centerLng = $placement['lng'];
+        $radius = $placement['patrol_area']['radius'];
+        
+        $routes = [];
+        for ($i = 0; $i < 4; $i++) {
+            $angle = ($i / 4) * 2 * M_PI;
+            $lat = $centerLat + ($radius / 111.32) * cos($angle);
+            $lng = $centerLng + ($radius / (111.32 * cos(deg2rad($centerLat)))) * sin($angle);
+            
+            $routes[] = [
+                'checkpoint' => $i + 1,
+                'lat' => $lat,
+                'lng' => $lng,
+                'estimated_time' => ($i + 1) * 5, // 5分間隔
+            ];
+        }
+        
+        return $routes;
+    }
+
+    /**
+     * 配置推奨事項を生成
+     * 
+     * @param Project $project
+     * @param array $placements
+     * @return array
+     */
+    private function generatePlacementRecommendations(Project $project, array $placements): array
+    {
+        $recommendations = [];
+        
+        // 現場タイプに応じた推奨事項
+        switch ($project->project_type ?? 'general') {
+            case 'event_security':
+                $recommendations[] = '入場口付近に警備員を重点配置することを推奨します';
+                $recommendations[] = '緊急時の避難経路確保を優先してください';
+                break;
+            case 'facility_security':
+                $recommendations[] = '24時間監視体制の構築を検討してください';
+                $recommendations[] = '定期巡回ルートの設定が効果的です';
+                break;
+            case 'construction_security':
+                $recommendations[] = '重機・資材置き場の監視を強化してください';
+                $recommendations[] = '工事時間外の警備体制を重視してください';
+                break;
+            default:
+                $recommendations[] = '現場の特性に応じた警備計画を策定してください';
+                break;
+        }
+        
+        // 配置数に応じた推奨事項
+        if (count($placements) === 1) {
+            $recommendations[] = '単独勤務時は定期的な報告体制を構築してください';
+        } elseif (count($placements) >= 3) {
+            $recommendations[] = '複数名配置時は効果的な連携体制を構築してください';
+        }
+        
+        return $recommendations;
+    }
+
+    /**
+     * マルチプロジェクトルート最適化を実行
+     * 
+     * @param Collection $projects
+     * @param array $startLocation
+     * @param string $optimizationType
+     * @return array
+     */
+    private function performMultiProjectRouteOptimization($projects, array $startLocation, string $optimizationType): array
+    {
+        // 実際の実装では Google Maps Directions API を使用
+        // ここでは仮の最適化ロジックを実装
+        
+        $projectLocations = $projects->map(function($project) {
+            return [
+                'id' => $project->id,
+                'name' => $project->name,
+                'lat' => $project->location_lat,
+                'lng' => $project->location_lng,
+            ];
+        })->toArray();
+        
+        // 簡易的な距離ベースソート（実際にはより高度な最適化アルゴリズムを使用）
+        usort($projectLocations, function($a, $b) use ($startLocation) {
+            $distA = $this->calculateHaversineDistance($startLocation['lat'], $startLocation['lng'], $a['lat'], $a['lng']);
+            $distB = $this->calculateHaversineDistance($startLocation['lat'], $startLocation['lng'], $b['lat'], $b['lng']);
+            return $distA <=> $distB;
+        });
+        
+        return [
+            'route_order' => $projectLocations,
+            'total_distance' => $this->calculateTotalRouteDistance($startLocation, $projectLocations),
+            'estimated_time' => $this->estimateRouteTime($startLocation, $projectLocations),
+            'optimization_method' => $optimizationType,
+        ];
+    }
+
+    /**
+     * ハヴァサイン公式による距離計算
+     * 
+     * @param float $lat1
+     * @param float $lng1
+     * @param float $lat2
+     * @param float $lng2
+     * @return float
+     */
+    private function calculateHaversineDistance(float $lat1, float $lng1, float $lat2, float $lng2): float
+    {
+        $earthRadius = 6371; // 地球の半径（km）
+        
+        $dLat = deg2rad($lat2 - $lat1);
+        $dLng = deg2rad($lng2 - $lng1);
+        
+        $a = sin($dLat/2) * sin($dLat/2) + 
+             cos(deg2rad($lat1)) * cos(deg2rad($lat2)) * 
+             sin($dLng/2) * sin($dLng/2);
+        
+        $c = 2 * atan2(sqrt($a), sqrt(1-$a));
+        
+        return $earthRadius * $c;
+    }
+
+    /**
+     * ルート総距離を計算
+     * 
+     * @param array $startLocation
+     * @param array $locations
+     * @return float
+     */
+    private function calculateTotalRouteDistance(array $startLocation, array $locations): float
+    {
+        $totalDistance = 0;
+        $currentLocation = $startLocation;
+        
+        foreach ($locations as $location) {
+            $distance = $this->calculateHaversineDistance(
+                $currentLocation['lat'], $currentLocation['lng'],
+                $location['lat'], $location['lng']
+            );
+            $totalDistance += $distance;
+            $currentLocation = $location;
+        }
+        
+        return round($totalDistance, 2);
+    }
+
+    /**
+     * ルート所要時間を推定
+     * 
+     * @param array $startLocation
+     * @param array $locations
+     * @return int
+     */
+    private function estimateRouteTime(array $startLocation, array $locations): int
+    {
+        $totalDistance = $this->calculateTotalRouteDistance($startLocation, $locations);
+        // 平均時速30kmで計算 + 各現場で15分の作業時間
+        $travelTimeMinutes = ($totalDistance / 30) * 60;
+        $workTimeMinutes = count($locations) * 15;
+        
+        return round($travelTimeMinutes + $workTimeMinutes);
+    }
 }

@@ -815,4 +815,509 @@ class GuardController extends Controller
 
         return back()->with('success', '給与情報を更新しました');
     }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Google Maps API連携機能
+    |--------------------------------------------------------------------------
+    */
+
+    /**
+     * 警備員位置管理地図を表示
+     * 
+     * @param Request $request
+     * @return \Illuminate\View\View|\Illuminate\Http\JsonResponse
+     */
+    public function mapView(Request $request)
+    {
+        $user = Auth::user();
+        
+        $guards = Guard::with(['user', 'company', 'currentShift'])
+            ->where('status', 'active')
+            ->when($user->role !== 'admin', function($q) use ($user) {
+                return $q->where('company_id', $user->company_id);
+            })
+            ->get();
+
+        // 現在勤務中の警備員の位置情報を取得
+        $activeGuards = [];
+        foreach ($guards as $guard) {
+            if ($guard->currentShift && $guard->location_lat && $guard->location_lng) {
+                $activeGuards[] = [
+                    'id' => $guard->id,
+                    'name' => $guard->user->name,
+                    'employee_id' => $guard->employee_id,
+                    'company' => $guard->company->name,
+                    'latitude' => $guard->location_lat,
+                    'longitude' => $guard->location_lng,
+                    'last_update' => $guard->location_updated_at,
+                    'shift_info' => [
+                        'project_name' => $guard->currentShift->project->name ?? '',
+                        'start_time' => $guard->currentShift->start_time ?? '',
+                        'end_time' => $guard->currentShift->end_time ?? '',
+                        'status' => $guard->currentShift->status ?? '',
+                    ],
+                ];
+            }
+        }
+
+        if ($request->expectsJson()) {
+            return $this->successResponse([
+                'guards' => $activeGuards,
+                'center' => [
+                    'lat' => config('services.google_maps.default_lat'),
+                    'lng' => config('services.google_maps.default_lng'),
+                ],
+                'zoom' => config('services.google_maps.default_zoom'),
+            ], '警備員位置情報を取得しました');
+        }
+
+        return view('guards.map', compact('activeGuards'));
+    }
+
+    /**
+     * 警備員の位置情報を更新
+     * 
+     * @param Request $request
+     * @param int $id
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function updateLocation(Request $request, $id)
+    {
+        $validator = Validator::make($request->all(), [
+            'latitude' => 'required|numeric|between:-90,90',
+            'longitude' => 'required|numeric|between:-180,180',
+            'accuracy' => 'nullable|numeric|min:0',
+            'address' => 'nullable|string|max:500',
+        ]);
+
+        if ($validator->fails()) {
+            return $this->errorResponse('位置情報が無効です', 422, $validator->errors());
+        }
+
+        $user = Auth::user();
+        
+        $guard = Guard::when($user->role !== 'admin', function($q) use ($user) {
+                return $q->where('company_id', $user->company_id);
+            })
+            ->when($user->role === 'guard', function($q) use ($user) {
+                return $q->where('user_id', $user->id);
+            })
+            ->findOrFail($id);
+
+        $guard->update([
+            'location_lat' => $request->latitude,
+            'location_lng' => $request->longitude,
+            'location_accuracy' => $request->accuracy,
+            'location_address' => $request->address,
+            'location_updated_at' => now(),
+        ]);
+
+        return $this->successResponse([
+            'guard_id' => $guard->id,
+            'location' => [
+                'latitude' => $guard->location_lat,
+                'longitude' => $guard->location_lng,
+                'accuracy' => $guard->location_accuracy,
+                'address' => $guard->location_address,
+                'updated_at' => $guard->location_updated_at,
+            ]
+        ], '位置情報を更新しました');
+    }
+
+    /**
+     * 警備員の位置履歴を取得
+     * 
+     * @param Request $request
+     * @param int $id
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function getLocationHistory(Request $request, $id)
+    {
+        $user = Auth::user();
+        
+        $guard = Guard::when($user->role !== 'admin', function($q) use ($user) {
+                return $q->where('company_id', $user->company_id);
+            })
+            ->when($user->role === 'guard', function($q) use ($user) {
+                return $q->where('user_id', $user->id);
+            })
+            ->findOrFail($id);
+
+        $dateFrom = $request->get('date_from', Carbon::today()->subDays(7)->format('Y-m-d'));
+        $dateTo = $request->get('date_to', Carbon::today()->format('Y-m-d'));
+
+        // 位置履歴データの取得（実際の実装では位置履歴テーブルを作成することを推奨）
+        $history = collect([
+            [
+                'datetime' => now()->subHours(1),
+                'latitude' => $guard->location_lat + rand(-10, 10) / 10000,
+                'longitude' => $guard->location_lng + rand(-10, 10) / 10000,
+                'accuracy' => rand(5, 50),
+                'address' => '移動中',
+            ],
+            [
+                'datetime' => now()->subHours(2),
+                'latitude' => $guard->location_lat + rand(-10, 10) / 10000,
+                'longitude' => $guard->location_lng + rand(-10, 10) / 10000,
+                'accuracy' => rand(5, 50),
+                'address' => '現場到着',
+            ],
+        ]);
+
+        return $this->successResponse([
+            'guard' => [
+                'id' => $guard->id,
+                'name' => $guard->user->name,
+                'employee_id' => $guard->employee_id,
+            ],
+            'history' => $history,
+            'period' => [
+                'from' => $dateFrom,
+                'to' => $dateTo,
+            ]
+        ], '位置履歴を取得しました');
+    }
+
+    /**
+     * ルート最適化計算
+     * 
+     * @param Request $request
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function calculateOptimizedRoute(Request $request)
+    {
+        $validator = Validator::make($request->all(), [
+            'origin' => 'required|array',
+            'origin.lat' => 'required|numeric|between:-90,90',
+            'origin.lng' => 'required|numeric|between:-180,180',
+            'destinations' => 'required|array|min:1',
+            'destinations.*.lat' => 'required|numeric|between:-90,90',
+            'destinations.*.lng' => 'required|numeric|between:-180,180',
+            'destinations.*.name' => 'nullable|string|max:255',
+            'mode' => 'nullable|in:driving,walking,transit',
+            'avoid' => 'nullable|array',
+            'avoid.*' => 'in:tolls,highways,ferries',
+        ]);
+
+        if ($validator->fails()) {
+            return $this->errorResponse('ルート計算データが無効です', 422, $validator->errors());
+        }
+
+        $origin = $request->origin;
+        $destinations = $request->destinations;
+        $mode = $request->get('mode', 'driving');
+        $avoid = $request->get('avoid', []);
+
+        // Google Maps Directions APIを使用したルート最適化
+        // 実際の実装では外部APIコールを行う
+        $optimizedRoute = $this->performRouteOptimization($origin, $destinations, $mode, $avoid);
+
+        return $this->successResponse([
+            'origin' => $origin,
+            'destinations' => $destinations,
+            'optimized_route' => $optimizedRoute,
+            'total_distance' => $optimizedRoute['total_distance'] ?? 0,
+            'total_duration' => $optimizedRoute['total_duration'] ?? 0,
+            'mode' => $mode,
+            'calculated_at' => now(),
+        ], 'ルート最適化を完了しました');
+    }
+
+    /**
+     * 現場間の距離・時間を計算
+     * 
+     * @param Request $request
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function calculateDistance(Request $request)
+    {
+        $validator = Validator::make($request->all(), [
+            'origin' => 'required|array',
+            'origin.lat' => 'required|numeric|between:-90,90',
+            'origin.lng' => 'required|numeric|between:-180,180',
+            'destination' => 'required|array',
+            'destination.lat' => 'required|numeric|between:-90,90',
+            'destination.lng' => 'required|numeric|between:-180,180',
+            'mode' => 'nullable|in:driving,walking,transit',
+        ]);
+
+        if ($validator->fails()) {
+            return $this->errorResponse('距離計算データが無効です', 422, $validator->errors());
+        }
+
+        $origin = $request->origin;
+        $destination = $request->destination;
+        $mode = $request->get('mode', 'driving');
+
+        // Google Maps Distance Matrix APIを使用した距離・時間計算
+        $result = $this->calculateDistanceAndTime($origin, $destination, $mode);
+
+        return $this->successResponse([
+            'origin' => $origin,
+            'destination' => $destination,
+            'distance' => $result['distance'],
+            'duration' => $result['duration'],
+            'mode' => $mode,
+            'calculated_at' => now(),
+        ], '距離・時間を計算しました');
+    }
+
+    /**
+     * 警備員の現在地から最寄りの現場を検索
+     * 
+     * @param Request $request
+     * @param int $id
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function findNearbyProjects(Request $request, $id)
+    {
+        $user = Auth::user();
+        
+        $guard = Guard::with(['user', 'company'])
+            ->when($user->role !== 'admin', function($q) use ($user) {
+                return $q->where('company_id', $user->company_id);
+            })
+            ->when($user->role === 'guard', function($q) use ($user) {
+                return $q->where('user_id', $user->id);
+            })
+            ->findOrFail($id);
+
+        if (!$guard->location_lat || !$guard->location_lng) {
+            return $this->errorResponse('警備員の位置情報が取得できません', 400);
+        }
+
+        $radius = $request->get('radius', 10); // デフォルト10km圏内
+        
+        // 現在地から指定範囲内のプロジェクトを検索
+        $nearbyProjects = Project::where('status', 'active')
+            ->where('company_id', $guard->company_id)
+            ->whereNotNull('location_lat')
+            ->whereNotNull('location_lng')
+            ->selectRaw('*, 
+                (6371 * acos(cos(radians(?)) * cos(radians(location_lat)) * 
+                cos(radians(location_lng) - radians(?)) + sin(radians(?)) * 
+                sin(radians(location_lat)))) AS distance', 
+                [$guard->location_lat, $guard->location_lng, $guard->location_lat])
+            ->having('distance', '<=', $radius)
+            ->orderBy('distance', 'asc')
+            ->with(['customer'])
+            ->get();
+
+        $projects = $nearbyProjects->map(function($project) use ($guard) {
+            return [
+                'id' => $project->id,
+                'name' => $project->name,
+                'customer' => $project->customer->name ?? '',
+                'location' => [
+                    'latitude' => $project->location_lat,
+                    'longitude' => $project->location_lng,
+                    'address' => $project->location_address,
+                ],
+                'distance' => round($project->distance, 2),
+                'estimated_travel_time' => $this->estimateTravelTime($project->distance),
+                'status' => $project->status,
+                'priority' => $project->priority ?? 'normal',
+            ];
+        });
+
+        return $this->successResponse([
+            'guard' => [
+                'id' => $guard->id,
+                'name' => $guard->user->name,
+                'employee_id' => $guard->employee_id,
+                'current_location' => [
+                    'latitude' => $guard->location_lat,
+                    'longitude' => $guard->location_lng,
+                    'address' => $guard->location_address,
+                ],
+            ],
+            'nearby_projects' => $projects,
+            'search_radius' => $radius,
+            'total_found' => $projects->count(),
+        ], '最寄りの現場情報を取得しました');
+    }
+
+    /**
+     * ジオコーディング（住所→緯度経度変換）
+     * 
+     * @param Request $request
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function geocodeAddress(Request $request)
+    {
+        $validator = Validator::make($request->all(), [
+            'address' => 'required|string|max:500',
+        ]);
+
+        if ($validator->fails()) {
+            return $this->errorResponse('住所が無効です', 422, $validator->errors());
+        }
+
+        $address = $request->address;
+        
+        // Google Maps Geocoding APIを使用した住所→座標変換
+        $result = $this->performGeocoding($address);
+
+        if (!$result) {
+            return $this->errorResponse('住所から座標を取得できませんでした', 400);
+        }
+
+        return $this->successResponse([
+            'address' => $address,
+            'location' => [
+                'latitude' => $result['lat'],
+                'longitude' => $result['lng'],
+            ],
+            'formatted_address' => $result['formatted_address'] ?? $address,
+            'place_id' => $result['place_id'] ?? null,
+        ], 'ジオコーディングを完了しました');
+    }
+
+    /**
+     * 逆ジオコーディング（緯度経度→住所変換）
+     * 
+     * @param Request $request
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function reverseGeocode(Request $request)
+    {
+        $validator = Validator::make($request->all(), [
+            'latitude' => 'required|numeric|between:-90,90',
+            'longitude' => 'required|numeric|between:-180,180',
+        ]);
+
+        if ($validator->fails()) {
+            return $this->errorResponse('座標が無効です', 422, $validator->errors());
+        }
+
+        $lat = $request->latitude;
+        $lng = $request->longitude;
+        
+        // Google Maps Reverse Geocoding APIを使用した座標→住所変換
+        $result = $this->performReverseGeocoding($lat, $lng);
+
+        if (!$result) {
+            return $this->errorResponse('座標から住所を取得できませんでした', 400);
+        }
+
+        return $this->successResponse([
+            'location' => [
+                'latitude' => $lat,
+                'longitude' => $lng,
+            ],
+            'address' => $result['formatted_address'] ?? '',
+            'components' => $result['address_components'] ?? [],
+            'place_id' => $result['place_id'] ?? null,
+        ], '逆ジオコーディングを完了しました');
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Google Maps API Helper Methods
+    |--------------------------------------------------------------------------
+    */
+
+    /**
+     * ルート最適化の実行
+     * 
+     * @param array $origin
+     * @param array $destinations
+     * @param string $mode
+     * @param array $avoid
+     * @return array
+     */
+    private function performRouteOptimization(array $origin, array $destinations, string $mode, array $avoid): array
+    {
+        // 実際の実装では Google Maps Directions API を呼び出す
+        // ここでは仮データを返す
+        return [
+            'waypoints' => $destinations,
+            'total_distance' => rand(10, 50) . 'km',
+            'total_duration' => rand(30, 120) . '分',
+            'route_points' => [
+                $origin,
+                ...$destinations
+            ],
+        ];
+    }
+
+    /**
+     * 距離・時間の計算
+     * 
+     * @param array $origin
+     * @param array $destination
+     * @param string $mode
+     * @return array
+     */
+    private function calculateDistanceAndTime(array $origin, array $destination, string $mode): array
+    {
+        // 実際の実装では Google Maps Distance Matrix API を呼び出す
+        // ここでは仮データを返す
+        return [
+            'distance' => rand(1, 20) . 'km',
+            'duration' => rand(5, 60) . '分',
+        ];
+    }
+
+    /**
+     * 移動時間の推定
+     * 
+     * @param float $distance
+     * @return string
+     */
+    private function estimateTravelTime(float $distance): string
+    {
+        // 平均時速30kmで計算
+        $hours = $distance / 30;
+        $minutes = round($hours * 60);
+        
+        if ($minutes < 60) {
+            return $minutes . '分';
+        } else {
+            $hours = floor($minutes / 60);
+            $remainingMinutes = $minutes % 60;
+            return $hours . '時間' . ($remainingMinutes > 0 ? $remainingMinutes . '分' : '');
+        }
+    }
+
+    /**
+     * ジオコーディングの実行
+     * 
+     * @param string $address
+     * @return array|null
+     */
+    private function performGeocoding(string $address): ?array
+    {
+        // 実際の実装では Google Maps Geocoding API を呼び出す
+        // ここでは仮データを返す
+        return [
+            'lat' => 35.6762 + (rand(-1000, 1000) / 10000),
+            'lng' => 139.6503 + (rand(-1000, 1000) / 10000),
+            'formatted_address' => $address,
+            'place_id' => 'ChIJ' . bin2hex(random_bytes(16)),
+        ];
+    }
+
+    /**
+     * 逆ジオコーディングの実行
+     * 
+     * @param float $lat
+     * @param float $lng
+     * @return array|null
+     */
+    private function performReverseGeocoding(float $lat, float $lng): ?array
+    {
+        // 実際の実装では Google Maps Reverse Geocoding API を呼び出す
+        // ここでは仮データを返す
+        return [
+            'formatted_address' => '東京都千代田区丸の内1-1-1',
+            'address_components' => [
+                ['long_name' => '東京都', 'types' => ['administrative_area_level_1']],
+                ['long_name' => '千代田区', 'types' => ['locality']],
+                ['long_name' => '丸の内', 'types' => ['sublocality']],
+            ],
+            'place_id' => 'ChIJ' . bin2hex(random_bytes(16)),
+        ];
+    }
 }

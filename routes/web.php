@@ -70,6 +70,16 @@ Route::middleware(['auth'])->group(function () {
         Route::get('/kpi', [DashboardController::class, 'getKpi'])->name('kpi');
         Route::get('/alerts', [DashboardController::class, 'getAlerts'])->name('alerts');
         Route::post('/alerts/{id}/dismiss', [DashboardController::class, 'dismissAlert'])->name('alerts.dismiss');
+        
+        // 売上分析機能
+        Route::get('/revenue-analysis', [DashboardController::class, 'revenueAnalysis'])->name('revenue.analysis');
+        Route::get('/revenue-analysis/data', [DashboardController::class, 'revenueAnalysis'])->name('revenue.analysis.data');
+        Route::get('/revenue-analysis/export', [DashboardController::class, 'exportRevenueAnalysis'])->name('revenue.analysis.export');
+        
+        // チャートデータAPI
+        Route::get('/chart-data', [DashboardController::class, 'chartData'])->name('chart.data');
+        Route::get('/real-time-data', [DashboardController::class, 'realTimeData'])->name('realtime.data');
+        Route::post('/emergency-alert', [DashboardController::class, 'emergencyAlert'])->name('emergency.alert');
     });
     
     // =============================================================================
@@ -110,6 +120,14 @@ Route::middleware(['auth'])->group(function () {
         Route::post('/{project}/status', [ProjectController::class, 'updateStatus'])->name('status.update');
         Route::post('/{project}/guards/assign', [ProjectController::class, 'assignGuards'])->name('guards.assign');
         Route::delete('/{project}/guards/{guard}', [ProjectController::class, 'removeGuard'])->name('guards.remove');
+        
+        // Google Maps関連機能
+        Route::get('/map/view', [ProjectController::class, 'mapView'])->name('map');
+        Route::post('/{project}/location', [ProjectController::class, 'updateLocation'])->name('location.update');
+        Route::get('/{project}/guards/nearby', [ProjectController::class, 'findNearbyGuards'])->name('guards.nearby');
+        Route::post('/{project}/placement/optimal', [ProjectController::class, 'calculateOptimalPlacement'])->name('placement.optimal');
+        Route::post('/routes/multi-project', [ProjectController::class, 'optimizeMultiProjectRoute'])->name('routes.multi_project');
+        Route::get('/{project}/area/monitor', [ProjectController::class, 'monitorGuardsInArea'])->name('area.monitor');
     });
     
     // =============================================================================
@@ -133,6 +151,16 @@ Route::middleware(['auth'])->group(function () {
         Route::post('/{guard}/qualifications', [GuardController::class, 'updateQualifications'])->name('qualifications.update');
         Route::post('/{guard}/salary', [GuardController::class, 'updateSalary'])->name('salary.update');
         Route::get('/{guard}/performance', [GuardController::class, 'getPerformance'])->name('performance');
+        
+        // Google Maps関連機能
+        Route::get('/map/view', [GuardController::class, 'mapView'])->name('map');
+        Route::post('/{guard}/location', [GuardController::class, 'updateLocation'])->name('location.update');
+        Route::get('/{guard}/location/history', [GuardController::class, 'getLocationHistory'])->name('location.history');
+        Route::get('/{guard}/projects/nearby', [GuardController::class, 'findNearbyProjects'])->name('projects.nearby');
+        Route::post('/routes/optimize', [GuardController::class, 'calculateOptimizedRoute'])->name('routes.optimize');
+        Route::post('/distance/calculate', [GuardController::class, 'calculateDistance'])->name('distance.calculate');
+        Route::post('/geocoding/address', [GuardController::class, 'geocodeAddress'])->name('geocoding.address');
+        Route::post('/geocoding/reverse', [GuardController::class, 'reverseGeocode'])->name('geocoding.reverse');
     });
     
     // =============================================================================
