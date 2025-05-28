@@ -58,15 +58,89 @@ Route::middleware('auth:sanctum')->group(function () {
     });
     
     // =============================================================================
-    // ダッシュボード API
+    // 統合ダッシュボード API
     // =============================================================================
     
     Route::prefix('dashboard')->name('api.dashboard.')->group(function () {
+        // 基本データ取得
+        Route::get('/', [DashboardController::class, 'index'])->name('index');
+        Route::get('/integrated-data', [DashboardController::class, 'index'])->name('integrated_data');
+        
+        // KPI・統計情報
         Route::get('/stats', [DashboardController::class, 'apiGetStats'])->name('stats');
         Route::get('/kpi', [DashboardController::class, 'apiGetKpi'])->name('kpi');
-        Route::get('/alerts', [DashboardController::class, 'apiGetAlerts'])->name('alerts');
-        Route::post('/alerts/{id}/dismiss', [DashboardController::class, 'apiDismissAlert'])->name('alerts.dismiss');
         Route::get('/overview', [DashboardController::class, 'apiGetOverview'])->name('overview');
+        
+        // 3社統合データ
+        Route::get('/company-integration', [DashboardController::class, 'getCompanyIntegrationData'])->name('company_integration');
+        Route::get('/company/{companyId}/performance', [DashboardController::class, 'getCompanyPerformance'])->name('company.performance');
+        Route::get('/cross-company-projects', [DashboardController::class, 'getCrossCompanyProjects'])->name('cross_company_projects');
+        Route::get('/shared-resources', [DashboardController::class, 'getSharedResources'])->name('shared_resources');
+        
+        // チャート・グラフデータ
+        Route::get('/charts/data', [DashboardController::class, 'chartData'])->name('charts.data');
+        Route::get('/charts/revenue-trend', [DashboardController::class, 'getRevenueTrendData'])->name('charts.revenue_trend');
+        Route::get('/charts/performance', [DashboardController::class, 'getPerformanceChartData'])->name('charts.performance');
+        Route::get('/charts/company-comparison', [DashboardController::class, 'getCompanyComparisonData'])->name('charts.company_comparison');
+        
+        // リアルタイムデータ
+        Route::get('/real-time/data', [DashboardController::class, 'realTimeData'])->name('real_time.data');
+        Route::get('/real-time/guard-locations', [DashboardController::class, 'getGuardLocations'])->name('real_time.guard_locations');
+        Route::get('/real-time/active-shifts', [DashboardController::class, 'getActiveShifts'])->name('real_time.active_shifts');
+        Route::get('/real-time/system-status', [DashboardController::class, 'getSystemStatus'])->name('real_time.system_status');
+        Route::get('/real-time/security-monitoring', [DashboardController::class, 'getSecurityMonitoring'])->name('real_time.security_monitoring');
+        
+        // 緊急時対応
+        Route::post('/emergency/alert', [DashboardController::class, 'emergencyAlert'])->name('emergency.alert');
+        Route::get('/emergency/status', [DashboardController::class, 'getEmergencyStatus'])->name('emergency.status');
+        Route::post('/emergency/resolve/{alertId}', [DashboardController::class, 'resolveEmergencyAlert'])->name('emergency.resolve');
+        
+        // アラート・通知管理
+        Route::get('/alerts', [DashboardController::class, 'apiGetAlerts'])->name('alerts');
+        Route::get('/alerts/critical', [DashboardController::class, 'getCriticalAlerts'])->name('alerts.critical');
+        Route::get('/alerts/warnings', [DashboardController::class, 'getWarningAlerts'])->name('alerts.warnings');
+        Route::post('/alerts/{id}/dismiss', [DashboardController::class, 'apiDismissAlert'])->name('alerts.dismiss');
+        Route::post('/alerts/{id}/acknowledge', [DashboardController::class, 'acknowledgeAlert'])->name('alerts.acknowledge');
+        
+        // 高度分析・レポート
+        Route::get('/analytics/advanced', [DashboardController::class, 'getAdvancedAnalytics'])->name('analytics.advanced');
+        Route::get('/analytics/revenue', [DashboardController::class, 'getRevenueAnalytics'])->name('analytics.revenue');
+        Route::get('/analytics/guard-performance', [DashboardController::class, 'getGuardPerformanceAnalytics'])->name('analytics.guard_performance');
+        Route::get('/analytics/customer', [DashboardController::class, 'getCustomerAnalytics'])->name('analytics.customer');
+        Route::get('/analytics/operational', [DashboardController::class, 'getOperationalAnalytics'])->name('analytics.operational');
+        
+        // 予測・トレンド分析
+        Route::get('/trends/analysis', [DashboardController::class, 'getTrendAnalysis'])->name('trends.analysis');
+        Route::get('/trends/market', [DashboardController::class, 'getMarketTrends'])->name('trends.market');
+        Route::get('/trends/business', [DashboardController::class, 'getBusinessTrends'])->name('trends.business');
+        Route::get('/trends/predictions', [DashboardController::class, 'getPredictions'])->name('trends.predictions');
+        
+        // セキュリティ・コンプライアンス
+        Route::get('/security/compliance', [DashboardController::class, 'getSecurityComplianceData'])->name('security.compliance');
+        Route::get('/security/industry-law', [DashboardController::class, 'getSecurityIndustryLawCompliance'])->name('security.industry_law');
+        Route::get('/security/data-protection', [DashboardController::class, 'getDataProtectionStatus'])->name('security.data_protection');
+        Route::get('/security/audit-results', [DashboardController::class, 'getAuditResults'])->name('security.audit_results');
+        
+        // パフォーマンス指標
+        Route::get('/performance/metrics', [DashboardController::class, 'getPerformanceMetrics'])->name('performance.metrics');
+        Route::get('/performance/guards', [DashboardController::class, 'getGuardPerformanceMetrics'])->name('performance.guards');
+        Route::get('/performance/projects', [DashboardController::class, 'getProjectPerformanceMetrics'])->name('performance.projects');
+        Route::get('/performance/financial', [DashboardController::class, 'getFinancialPerformanceMetrics'])->name('performance.financial');
+        
+        // カスタマイズ・設定
+        Route::get('/user-context', [DashboardController::class, 'getUserContext'])->name('user_context');
+        Route::post('/preferences/save', [DashboardController::class, 'saveUserPreferences'])->name('preferences.save');
+        Route::get('/preferences/load', [DashboardController::class, 'loadUserPreferences'])->name('preferences.load');
+        
+        // エクスポート機能
+        Route::get('/export/comprehensive-report', [DashboardController::class, 'exportComprehensiveReport'])->name('export.comprehensive_report');
+        Route::get('/export/kpi-summary', [DashboardController::class, 'exportKpiSummary'])->name('export.kpi_summary');
+        Route::get('/export/company-comparison', [DashboardController::class, 'exportCompanyComparison'])->name('export.company_comparison');
+        
+        // フィルタリング・期間設定
+        Route::get('/filter/period/{period}', [DashboardController::class, 'getDataByPeriod'])->name('filter.period');
+        Route::get('/filter/company/{companyId}', [DashboardController::class, 'getDataByCompany'])->name('filter.company');
+        Route::get('/filter/date-range', [DashboardController::class, 'getDataByDateRange'])->name('filter.date_range');
     });
     
     // =============================================================================
