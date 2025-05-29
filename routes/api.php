@@ -13,6 +13,7 @@ use App\Http\Controllers\QuotationController;
 use App\Http\Controllers\ContractController;
 use App\Http\Controllers\InvoiceController;
 use App\Http\Controllers\DailyReportController;
+use App\Http\Controllers\WeatherController;
 
 /*
 |--------------------------------------------------------------------------
@@ -495,6 +496,237 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/filter/by-guard/{guard}', [DailyReportController::class, 'apiGetReportsByGuard'])->name('filter.guard');
         Route::get('/filter/by-date-range', [DailyReportController::class, 'apiGetReportsByDateRange'])->name('filter.date_range');
         Route::get('/reports/monthly/{year}/{month}', [DailyReportController::class, 'apiGetMonthlyReports'])->name('reports.monthly');
+    });
+    
+    // =============================================================================
+    // 天気予報管理 API
+    // =============================================================================
+    
+    Route::prefix('weather')->name('api.weather.')->group(function () {
+        // 基本データ取得
+        Route::get('/', [WeatherController::class, 'index'])->name('index');
+        Route::get('/dashboard', [WeatherController::class, 'dashboard'])->name('dashboard');
+        Route::get('/{weather}', [WeatherController::class, 'show'])->name('show');
+        
+        // 天気情報更新・取得機能
+        Route::post('/update', [WeatherController::class, 'updateWeather'])->name('update');
+        Route::post('/update-manual', [WeatherController::class, 'updateWeather'])->name('update.manual');
+        Route::post('/update-all-locations', [WeatherController::class, 'updateAllSecurityLocations'])->name('update.all_locations');
+        Route::post('/refresh-current', [WeatherController::class, 'updateAllSecurityLocations'])->name('refresh.current');
+        
+        // 天気予報・統計機能
+        Route::get('/forecast/location', [WeatherController::class, 'getLocationForecast'])->name('forecast.location');
+        Route::get('/forecast/{location}/{days?}', [WeatherController::class, 'getLocationForecast'])->name('forecast.get');
+        Route::get('/current/location/{location}', function($location) {
+            $weather = \App\Models\Weather::getLatestByLocation($location);
+            return response()->json([
+                'status' => 'success',
+                'data' => $weather
+            ]);
+        })->name('current.location');
+        
+        // 天気アラート・警報機能
+        Route::get('/alerts', [WeatherController::class, 'getWeatherAlerts'])->name('alerts');
+        Route::get('/alerts/active', [WeatherController::class, 'getWeatherAlerts'])->name('alerts.active');
+        Route::get('/alerts/critical', function() {
+            $alerts = \App\Models\Weather::whereIn('weather_risk_level', ['critical'])
+                ->where('weather_date', '>=', now())
+                ->orderBy('weather_date')
+                ->get();
+            return response()->json(['status' => 'success', 'data' => $alerts]);
+        })->name('alerts.critical');
+        Route::get('/alerts/high-risk', function() {
+            $alerts = \App\Models\Weather::whereIn('weather_risk_level', ['high', 'critical'])
+                ->where('weather_date', '>=', now())
+                ->orderBy('weather_date')
+                ->get();
+            return response()->json(['status' => 'success', 'data' => $alerts]);
+        })->name('alerts.high_risk');
+        
+        // 統計・分析API
+        Route::get('/stats', [WeatherController::class, 'getWeatherStatsApi'])->name('stats');
+        Route::get('/stats/weekly', function() {
+            $startDate = now()->startOfWeek();
+            $endDate = now()->endOfWeek();
+            $data = \App\Models\Weather::whereBetween('weather_date', [$startDate, $endDate])->get();
+            
+            return response()->json([
+                'status' => 'success',
+                'data' => [
+                    'avg_temperature' => round($data->avg('temperature'), 1),
+                    'total_rainfall' => round($data->sum('rain_1h'), 1),
+                    'high_risk_count' => $data->whereIn('weather_risk_level', ['high', 'critical'])->count(),
+                    'outdoor_suitable_count' => $data->where('outdoor_work_suitable', true)->count(),
+                ]
+            ]);
+        })->name('stats.weekly');
+        Route::get('/stats/monthly', function() {
+            $startDate = now()->startOfMonth();
+            $endDate = now()->endOfMonth();
+            $data = \App\Models\Weather::whereBetween('weather_date', [$startDate, $endDate])->get();
+            
+            return response()->json([
+                'status' => 'success',
+                'data' => [
+                    'avg_temperature' => round($data->avg('temperature'), 1),
+                    'max_temperature' => $data->max('temperature'),
+                    'min_temperature' => $data->min('temperature'),
+                    'total_rainfall' => round($data->sum('rain_1h'), 1),
+                    'high_risk_days' => $data->whereIn('weather_risk_level', ['high', 'critical'])->unique('weather_date')->count(),
+                    'weather_distribution' => $data->groupBy('weather_main')->map->count(),
+                ]
+            ]);
+        })->name('stats.monthly');
+        
+        // チャート・トレンドデータ
+        Route::get('/trend-data', function() {
+            $data = \App\Models\Weather::where('weather_date', '>=', now()->subDays(7))
+                ->orderBy('weather_date')
+                ->get()
+                ->groupBy(function($item) {
+                    return $item->weather_date->format('Y-m-d');
+                });
+            
+            $labels = [];
+            $temperatures = [];
+            $rainfall = [];
+            
+            foreach($data as $date => $dayData) {
+                $labels[] = \Carbon\Carbon::parse($date)->format('m/d');
+                $temperatures[] = round($dayData->avg('temperature'), 1);
+                $rainfall[] = round($dayData->sum('rain_1h'), 1);
+            }
+            
+            return response()->json([
+                'status' => 'success',
+                'data' => [
+                    'labels' => $labels,
+                    'temperatures' => $temperatures,
+                    'rainfall' => $rainfall,
+                ]
+            ]);
+        })->name('chart.trend');
+        
+        // 地点別天気情報
+        Route::get('/locations/all', function() {
+            $locations = \App\Models\Weather::select('location_name')
+                ->distinct()
+                ->orderBy('location_name')
+                ->pluck('location_name');
+            
+            $locationData = [];
+            foreach($locations as $location) {
+                $latest = \App\Models\Weather::getLatestByLocation($location);
+                if($latest) {
+                    $locationData[] = [
+                        'location' => $location,
+                        'latest' => $latest,
+                        'stats' => \App\Models\Weather::getWeatherStats($location, 7)
+                    ];
+                }
+            }
+            
+            return response()->json([
+                'status' => 'success',
+                'data' => $locationData
+            ]);
+        })->name('locations.all');
+        
+        Route::get('/locations/summary', function() {
+            $locations = \App\Models\Weather::select('location_name')
+                ->distinct()
+                ->orderBy('location_name')
+                ->pluck('location_name');
+            
+            $summary = [];
+            foreach($locations as $location) {
+                $latest = \App\Models\Weather::getLatestByLocation($location);
+                if($latest) {
+                    $summary[$location] = [
+                        'temperature' => $latest->temperature,
+                        'weather_main' => $latest->weather_main,
+                        'weather_icon' => $latest->weather_icon,
+                        'risk_level' => $latest->weather_risk_level,
+                        'outdoor_suitable' => $latest->outdoor_work_suitable,
+                        'last_updated' => $latest->weather_date->toISOString(),
+                    ];
+                }
+            }
+            
+            return response()->json([
+                'status' => 'success',
+                'data' => $summary
+            ]);
+        })->name('locations.summary');
+        
+        // データエクスポート・管理機能
+        Route::get('/export', [WeatherController::class, 'exportWeatherData'])->name('export');
+        Route::post('/cleanup', [WeatherController::class, 'cleanupOldData'])->name('cleanup');
+        
+        // 業務影響分析
+        Route::get('/security-impact/{weather}', function(\App\Models\Weather $weather) {
+            return response()->json([
+                'status' => 'success',
+                'data' => $weather->calculateSecurityImpact()
+            ]);
+        })->name('security.impact');
+        
+        Route::get('/security-impact/current', function() {
+            $currentWeather = \App\Models\Weather::where('data_type', 'current')
+                ->where('weather_date', '>=', now()->subHours(3))
+                ->get();
+            
+            $impacts = [];
+            foreach($currentWeather as $weather) {
+                $impacts[] = [
+                    'location' => $weather->location_name,
+                    'impact' => $weather->calculateSecurityImpact(),
+                    'weather' => $weather
+                ];
+            }
+            
+            return response()->json([
+                'status' => 'success',
+                'data' => $impacts
+            ]);
+        })->name('security.impact.current');
+        
+        // 高度な検索・フィルタリング
+        Route::get('/search', function(\Illuminate\Http\Request $request) {
+            $query = \App\Models\Weather::query();
+            
+            if($request->has('location')) {
+                $query->where('location_name', 'LIKE', '%' . $request->location . '%');
+            }
+            
+            if($request->has('risk_level')) {
+                $query->where('weather_risk_level', $request->risk_level);
+            }
+            
+            if($request->has('date_from')) {
+                $query->whereDate('weather_date', '>=', $request->date_from);
+            }
+            
+            if($request->has('date_to')) {
+                $query->whereDate('weather_date', '<=', $request->date_to);
+            }
+            
+            if($request->has('weather_main')) {
+                $query->where('weather_main', $request->weather_main);
+            }
+            
+            if($request->has('outdoor_suitable')) {
+                $query->where('outdoor_work_suitable', $request->boolean('outdoor_suitable'));
+            }
+            
+            $results = $query->orderBy('weather_date', 'desc')
+                ->paginate($request->get('per_page', 15));
+            
+            return response()->json([
+                'status' => 'success',
+                'data' => $results
+            ]);
+        })->name('search');
     });
     
     // =============================================================================

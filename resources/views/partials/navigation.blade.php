@@ -133,6 +133,34 @@
                         </ul>
                     </li>
                     
+                    <!-- 天気予報 -->
+                    <li class="nav-item dropdown">
+                        <a class="nav-link dropdown-toggle {{ request()->routeIs('weather.*') ? 'active' : '' }}" 
+                           href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false">
+                            <i class="bi bi-cloud-sun me-1"></i>
+                            天気予報
+                        </a>
+                        <ul class="dropdown-menu">
+                            <li><a class="dropdown-item" href="{{ route('weather.dashboard') }}">
+                                <i class="bi bi-speedometer2 me-2"></i>天気ダッシュボード
+                            </a></li>
+                            <li><a class="dropdown-item" href="{{ route('weather.index') }}">
+                                <i class="bi bi-list me-2"></i>天気情報一覧
+                            </a></li>
+                            <li><hr class="dropdown-divider"></li>
+                            <li><a class="dropdown-item" href="{{ route('weather.alerts') }}">
+                                <i class="bi bi-exclamation-triangle me-2"></i>天気アラート
+                            </a></li>
+                            <li><a class="dropdown-item" href="{{ route('weather.stats.api') }}">
+                                <i class="bi bi-graph-up me-2"></i>天気統計
+                            </a></li>
+                            <li><hr class="dropdown-divider"></li>
+                            <li><a class="dropdown-item" href="#" onclick="updateAllWeatherFromMenu()">
+                                <i class="bi bi-arrow-clockwise me-2"></i>天気情報更新
+                            </a></li>
+                        </ul>
+                    </li>
+                    
                     <!-- 売上管理 -->
                     <li class="nav-item dropdown">
                         <a class="nav-link dropdown-toggle {{ request()->routeIs(['quotations.*', 'contracts.*', 'invoices.*']) ? 'active' : '' }}" 
@@ -346,6 +374,92 @@
         // 30秒間隔で通知を更新
         setInterval(loadNotifications, 30000);
     });
+    
+    // 天気情報一括更新（メニューから）
+    function updateAllWeatherFromMenu() {
+        if (!confirm('全地点の天気情報を更新しますか？\nこの処理には時間がかかる場合があります。')) {
+            return;
+        }
+        
+        // ローディング表示
+        const originalText = event.target.innerHTML;
+        event.target.innerHTML = '<i class="bi bi-arrow-clockwise me-2 spinner-border spinner-border-sm"></i>更新中...';
+        event.target.disabled = true;
+        
+        fetch('/api/weather/update-all-locations', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').getAttribute('content')
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            event.target.innerHTML = originalText;
+            event.target.disabled = false;
+            
+            if (data.success) {
+                // 成功通知
+                showToast('success', '天気情報更新完了', data.message);
+                
+                // 天気関連ページの場合はリロード
+                if (window.location.pathname.includes('/weather/')) {
+                    setTimeout(() => location.reload(), 1500);
+                }
+            } else {
+                showToast('error', '更新エラー', data.message || '天気情報の更新に失敗しました');
+            }
+        })
+        .catch(error => {
+            event.target.innerHTML = originalText;
+            event.target.disabled = false;
+            showToast('error', 'システムエラー', '天気情報の更新中にエラーが発生しました');
+            console.error('Weather update error:', error);
+        });
+    }
+    
+    // トースト通知表示関数
+    function showToast(type, title, message) {
+        // Bootstrap Toastを使用した通知表示
+        const toastContainer = document.getElementById('toast-container') || createToastContainer();
+        const toastId = 'toast-' + Date.now();
+        
+        const toastHTML = `
+            <div id="${toastId}" class="toast align-items-center text-white bg-${type === 'success' ? 'success' : 'danger'} border-0" role="alert">
+                <div class="d-flex">
+                    <div class="toast-body">
+                        <strong>${title}</strong><br>
+                        ${message}
+                    </div>
+                    <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button>
+                </div>
+            </div>
+        `;
+        
+        toastContainer.insertAdjacentHTML('beforeend', toastHTML);
+        
+        const toastElement = document.getElementById(toastId);
+        const toast = new bootstrap.Toast(toastElement, {
+            delay: type === 'success' ? 3000 : 5000
+        });
+        
+        toast.show();
+        
+        // トースト終了後に要素を削除
+        toastElement.addEventListener('hidden.bs.toast', function() {
+            toastElement.remove();
+        });
+    }
+    
+    // トーストコンテナ作成
+    function createToastContainer() {
+        const container = document.createElement('div');
+        container.id = 'toast-container';
+        container.className = 'toast-container position-fixed top-0 end-0 p-3';
+        container.style.zIndex = '9999';
+        document.body.appendChild(container);
+        return container;
+    }
 </script>
 
 <!-- Moment.js (時間表示用) -->

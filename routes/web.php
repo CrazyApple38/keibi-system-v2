@@ -12,6 +12,7 @@ use App\Http\Controllers\QuotationController;
 use App\Http\Controllers\ContractController;
 use App\Http\Controllers\InvoiceController;
 use App\Http\Controllers\DailyReportController;
+use App\Http\Controllers\WeatherController;
 
 /*
 |--------------------------------------------------------------------------
@@ -326,6 +327,31 @@ Route::middleware(['auth'])->group(function () {
         Route::get('/templates/list', [DailyReportController::class, 'getTemplates'])->name('templates');
         Route::post('/templates/save', [DailyReportController::class, 'saveTemplate'])->name('templates.save');
         Route::delete('/templates/{template}', [DailyReportController::class, 'deleteTemplate'])->name('templates.delete');
+    });
+    
+    // =============================================================================
+    // 天気予報管理
+    // =============================================================================
+    
+    Route::prefix('weather')->name('weather.')->group(function () {
+        Route::get('/', [WeatherController::class, 'index'])->name('index');
+        Route::get('/dashboard', [WeatherController::class, 'dashboard'])->name('dashboard');
+        Route::get('/{weather}', [WeatherController::class, 'show'])->name('show');
+        
+        // 天気情報更新機能
+        Route::post('/update', [WeatherController::class, 'updateWeather'])->name('update');
+        Route::post('/update-all', [WeatherController::class, 'updateAllSecurityLocations'])->name('update.all');
+        
+        // 天気予報・アラート機能
+        Route::get('/forecast/location', [WeatherController::class, 'getLocationForecast'])->name('forecast.location');
+        Route::get('/alerts/active', [WeatherController::class, 'getWeatherAlerts'])->name('alerts');
+        
+        // データエクスポート・管理機能
+        Route::get('/export/data', [WeatherController::class, 'exportWeatherData'])->name('export');
+        Route::post('/cleanup/old-data', [WeatherController::class, 'cleanupOldData'])->name('cleanup');
+        
+        // 統計・分析API
+        Route::get('/stats/api', [WeatherController::class, 'getWeatherStatsApi'])->name('stats.api');
     });
 });
 
